@@ -1,0 +1,470 @@
+#Load libraries
+```{r}
+library(readxl)
+library(tidyr)   # For data manipulation
+library(dplyr)   # For data manipulation
+library(ggsignif)
+library(ggplot2)
+library(broom) 
+library(rstatix)
+library(ggpubr)
+library(stringr)
+library(viridis)
+library(emmeans)
+library(purrr)
+library(grid)
+library(gridExtra)
+library(plotrix)
+library(tcplfit2)
+library(drc)
+library(scales)
+output_dir <- "../TCPLfit2/plots_output"
+dir.create(output_dir, showWarnings = FALSE)
+custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+
+```
+
+#Load in vitro
+```{r}
+# Load and filter
+data_flow <- read.csv("../Desktop/PFAS immunotox/Flow cyto (PBMCs)/Combined_flow_pha_fi.csv")
+
+data_flow <- data_flow %>%
+  filter(!(Chemical == "PFHxS" & Replicate == "M4")) %>%
+  filter(!(Chemical == "GenX" & Replicate == "F4")) %>%
+  mutate(
+    group = paste(Chemical, Dose, sep = "_"),
+    Sample. = Replicate
+  ) %>%
+  dplyr::select(CD3, CD4, CD8, Sex, Replicate, Chemical, Dose)
+
+# Pivot to long format — this allows per-marker NA filtering
+invitro <- data_flow %>%
+  mutate(Dose = ifelse(Dose == "Vehicle", 0, as.numeric(Dose))) %>%
+  mutate(Dose = as.numeric(Dose)) %>%
+  filter(!is.na(Dose))  %>%
+   pivot_longer(cols = c("CD4", "CD3", "CD8"),
+               names_to = "Marker", values_to = "Conc") %>%
+  filter(!is.na(Conc))
+
+cat("Final rows for tcplfit2 input:", nrow(invitro), "\n")
+```
+
+## tcplfit2
+```{r}
+# Unique chemicals
+chemicals <- unique(invitro$Chemical)
+
+# Cytokines to process
+markers <- unique(invitro$Marker) 
+print(markers)
+# Initialize result storage
+out_results_invitro <- list()
+fit_results <- list()
+
+for (marker in markers) {
+  message("=== Processing marker:", marker, "===")
+  out_results_invitro[[marker]] <- list()
+  fit_results[[marker]] <- list()
+  
+  for (chem in chemicals) {
+    message("Processing chemical: ", chem)
+    
+    # Filter test chemical data for this marker
+    test_chem <- invitro %>%
+      filter(Chemical == chem, Dose > 0, Marker == marker, !is.na(Conc))
+    
+    # Summarize vehicle control for this marker
+    vehicle_ctrl <- invitro %>%
+      filter(Chemical == chem, Dose == 0, Marker == marker) %>%
+      summarise(
+        Median = median(Conc, na.rm = TRUE),
+        nMad = mad(Conc, constant = 1.4826, na.rm = TRUE)
+      )
+    
+    # Skip if baseline or cutoff invalid
+    if (is.na(vehicle_ctrl$Median) || vehicle_ctrl$Median == 0 ||
+        is.na(vehicle_ctrl$nMad) || vehicle_ctrl$nMad == 0) {
+      message(paste("Skipping", chem, "-", marker, ": invalid baseline or cutoff"))
+      next
+    }
+
+    # Check for valid test data
+    if (nrow(test_chem) == 0 || all(is.na(test_chem$Conc))) {
+      message("Skipping ", chem, " for ", marker, ": no valid data")
+      next
+    }
+
+    # Prepare row input for concRespCore
+    row <- list(
+      conc = as.numeric(test_chem$Dose),
+      resp = test_chem$Conc,
+      bmed = vehicle_ctrl$Median,
+      cutoff = vehicle_ctrl$nMad,
+      onesd = vehicle_ctrl$nMad,
+      bmr = vehicle_ctrl$nMad,
+      name = chem,
+      assay = marker
+    )
+    
+    # Run concRespCore first
+    out <- tryCatch({
+      concRespCore(row, conthits = TRUE, aicc = FALSE, force.fit = FALSE, 
+                   bidirectional = TRUE,
+                   fitmodels = c("cnst", "hill", "poly1", "poly2", "pow", "exp2", "exp3", "exp4", "exp5"))
+    }, error = function(e) {
+      message(paste("Error in concRespCore for", chem, marker, ":", e$message))
+      return(NULL)
+    })
+    
+    out_results_invitro[[marker]][[chem]] <- out
+    
+    # Plot (only if out is not NULL)
+    if (!is.null(out)) {
+      tryCatch({
+        concRespPlot(out, ymin = -2000, ymax = 2000)
+      }, error = function(e) {
+        message("Error in concRespPlot for ", chem, marker, ": ", e$message)
+      })
+    }
+    
+    message("=== concRespCore output for ", chem, " - ", marker, " ===")
+    print(out)
+    
+    # Prepare input data frame for tcplfit2_core
+    df_fit <- data.frame(
+      conc = as.numeric(test_chem$Dose),
+      resp = test_chem$Conc,
+      markers = marker,
+      stringsAsFactors = FALSE
+    )
+    
+    # Run tcplfit2_core
+    fit <- tryCatch({
+      tcplfit2_core(df_fit)
+    }, error = function(e) {
+      message(paste("Error in tcplfit2_core for", chem, marker, ":", e$message))
+      return(NULL)
+    })
+    
+    if (is.null(fit)) next
+    fit_results[[marker]][[chem]] <- fit
+    
+    # Plot fits
+    tryCatch({
+      plot1 <- plot_allcurves(fit, test_chem$Dose, test_chem$Conc, log_conc = TRUE)
+      plot2 <- concRespPlot2(out, log_conc = FALSE) + ggtitle(paste0(chem, " - ", marker, " Response"))
+      print(plot2)
+      print(plot1)
+    }, error = function(e) {
+      message("Error in plotting for ", chem, marker, ": ", e$message)
+    })
+  }
+}
+
+```
+
+##conversion
+```{r}
+extract_info <- function(name, marker_name) {
+  # Remove marker name from beginning, get chemical
+  chemical <- gsub(paste0(marker_name, "_"), "", name)
+  
+  return(data.frame(
+    Marker = marker_name,
+    Chemical = chemical,
+    stringsAsFactors = FALSE
+  ))
+}
+
+extract_marker_data <- function(out_results_list, marker_name) {
+  do.call(rbind, lapply(names(out_results_list), function(name) {
+    result <- out_results_list[[name]]
+    
+    if (is.null(result)) return(NULL)
+    
+    bmd   <- result$bmd
+    bmdl  <- result$bmdl
+    bmdu  <- result$bmdu
+    
+    # Extract hit call, default FALSE if missing
+    hit <- if(!is.null(result$hit)) result$hit else FALSE
+    
+    info <- extract_info(name, marker_name)
+    info$BMD_uM  <- bmd
+    info$BMDL_uM <- bmdl
+    info$BMDU_uM <- bmdu
+    info$hit <- hit
+    
+    return(info)
+  }))
+}
+df_CD3  <- extract_marker_data(out_results_invitro$CD3, "CD3")
+df_CD4 <- extract_marker_data(out_results_invitro$CD4, "CD4")
+df_CD8 <- extract_marker_data(out_results_invitro$CD8, "CD8")
+
+combined_invitro <- bind_rows(df_CD3, df_CD4, df_CD8)
+```
+
+#Plot
+##BMD
+```{r}
+
+invitro_clean <- combined_invitro %>%
+  mutate(Source = "In Vitro") %>%
+  dplyr::select(Source, Chemical, Marker,  BMD = BMD_uM, BMDL = BMDL_uM, BMDU = BMDU_uM, hit)
+
+p <- ggplot(invitro_clean, aes(x = BMD, y = Marker, color = Source)) +
+  geom_point(position = position_dodge(width = 0.7), size = 3) +
+
+  # Whiskers: allow partial ones by using ifelse logic
+  geom_errorbarh(
+    aes(
+      xmin = ifelse(is.na(BMDL), BMD, BMDL),
+      xmax = ifelse(is.na(BMDU), BMD, BMDU)
+    ),
+    height = 0.3,
+    position = position_dodge(width = 0.7)
+  ) +
+
+  facet_grid(~Chemical) +
+  scale_x_log10() +
+  scale_color_manual(values = c("In Vitro" = "#7e03a8", "In Vivo" = "#ed7953")) +
+  labs(
+    title = "Comparison of BMDs: In Vitro vs In Vivo",
+    x = "Benchmark Dose (µM, log scale)",
+    y = "Marker"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+# Show the plot
+print(p)
+ggsave("BMD_Comparison_DotWhisker.png", p, width = 10, height = 6)
+
+#########################################Filter
+invitro2 <- invitro %>%
+  mutate(Source = "In Vitro") %>%
+  dplyr::select(Chemical, Dose, Source)
+
+dose_ranges <-invitro2 %>%
+  group_by(Chemical, Source) %>%
+  summarise(
+    minDose = min(Dose, na.rm = TRUE),
+    maxDose = max(Dose, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Apply filters
+combined_bmd_filtered <- invitro_clean %>%
+  left_join(dose_ranges, by = c("Chemical", "Source")) %>%
+  mutate(
+    # Filter 1: Remove BMDs outside concentration range
+    BMD = ifelse(BMD < minDose | BMD > maxDose, NA, BMD),
+    BMDL = ifelse(BMD < minDose | BMD > maxDose, NA, BMDL),
+    BMDU = ifelse(BMD < minDose | BMD > maxDose, NA, BMDU),
+
+    # Filter 2: Remove BMD if hit < 0.5
+    BMD = ifelse(hit < 0.9, NA, BMD),
+    BMDL = ifelse(hit < 0.9, NA, BMDL),
+    BMDU = ifelse(hit < 0.9, NA, BMDU),
+
+    # Filter 3: Remove BMD if no lower BMD limit
+    BMD = ifelse(is.na(BMDL), NA, BMD),
+    BMDU = ifelse(is.na(BMDL), NA, BMDU),
+    
+    
+    BMD = ifelse(BMDU / BMDL >= 40, NA, BMD),
+    BMDL = ifelse(BMDU / BMDL >= 40, NA, BMDL),
+    BMDU = ifelse(BMDU / BMDL >= 40, NA, BMDU)
+  )
+
+# Plot
+p <- ggplot(combined_bmd_filtered, aes(x = BMD, y = Marker, color = Source)) +
+  geom_point(position = position_dodge(width = 0.7), size = 3) +
+  geom_errorbarh(
+    aes(
+      xmin = ifelse(is.na(BMDL), BMD, BMDL),
+      xmax = ifelse(is.na(BMDU), BMD, BMDU)
+    ),
+    height = 0.3,
+    position = position_dodge(width = 0.7)
+  ) +
+  facet_grid(~Chemical) +
+  scale_x_log10() +
+  scale_color_manual(values = c("In Vitro" = "#7e03a8", "In Vivo" = "#ed7953")) +
+  labs(
+    title = "Comparison of BMDs: In Vitro vs In Vivo",
+    x = "Benchmark Dose (µM, log scale)",
+    y = "Marker"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+print(p)
+ggsave("BMD_Comparison_DotWhisker_filtered.png", p, width = 10, height = 6)
+# Filter for PFOS and TNF.a
+filtered_data <- combined_bmd_filtered %>%
+  filter(Chemical == "PFOS", Marker == "TNF.a")
+
+# Then plot
+p <- ggplot(filtered_data, aes(x = BMD, y = Marker, color = Source)) +
+  geom_point(position = position_dodge(width = 0.7), size = 3) +
+  geom_errorbarh(
+    aes(
+      xmin = ifelse(is.na(BMDL), BMD, BMDL),
+      xmax = ifelse(is.na(BMDU), BMD, BMDU)
+    ),
+    height = 0.3,
+    position = position_dodge(width = 0.7)
+  ) +
+  facet_grid(~Chemical) +
+  scale_x_log10() +
+  scale_color_manual(values = c("In Vitro" = "#7e03a8", "In Vivo" = "#ed7953")) +
+  labs(
+    title = "Comparison of BMDs: In Vitro vs In Vivo",
+    x = "Benchmark Dose (µM, log scale)",
+    y = "Marker"
+  ) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+print(p)
+
+ggsave("BMD_Comparison_DotWhisker_filtered2.png", p, width = 8, height = 4)
+```
+##DRC
+```{r}
+valid_bmds <- combined_bmd_filtered %>%
+  filter(!is.na(BMD)) %>%
+  distinct(Chemical, Marker, Source, BMD, BMDL, BMDU)
+# Prepare original data with Dose and logDose
+invivo2 <- invivo %>%
+  mutate(
+    Source = "In Vivo",
+    logDose = log10(Dose)
+  )
+
+invitro2 <- invitro %>%
+  mutate(
+    Source = "In Vitro",
+   Dose = (Dose +1),  # replace zeros with tiny number
+    logDose = log10(Dose)
+  )
+all_data <- bind_rows(invivo2, invitro2)
+
+models_combined <- data.frame()
+raw_combined <- data.frame()
+bmd_points <- data.frame()
+
+for (i in seq_len(nrow(valid_bmds))) {
+  chem <- valid_bmds$Chemical[i]
+  marker <- valid_bmds$Marker[i]
+  source <- valid_bmds$Source[i]
+
+  # Filter data for this combo
+  df <- all_data %>%
+    filter(Chemical == chem, Source == source) %>%
+    filter(Marker == marker, !is.na(Conc), !is.na(Dose))
+  
+fit <- tryCatch({
+  drm(Conc ~ Dose, data = df, fct = LL.4())
+}, error = function(e) {
+  message("Error fitting model for ", chem, " ", marker, " (", source, "): ", e$message)
+  return(NULL)
+})
+
+  # Predict dose-response curve
+  newdata <- data.frame(Dose = exp(seq(log(min(df$Dose)), log(max(df$Dose)), length.out = 100)))
+  preds <- predict(fit, newdata)
+  newdata$fit <- preds
+  newdata$Chemical <- chem
+  newdata$Marker <- marker
+  newdata$Source <- source
+  
+  models_combined <- bind_rows(models_combined, newdata)
+
+  # Raw points for plotting
+df_plot <- df %>%
+  mutate(Chemical = chem, Marker = marker, Source = source) %>%
+  rename(x = Dose)
+   raw_combined <- bind_rows(raw_combined, df_plot)
+# Inside your loop:
+bmd_row <- valid_bmds %>%
+  filter(Chemical == chem, Marker == marker, Source == source) %>%
+  slice(1)  # just in case there are duplicates
+
+if (!is.na(bmd_row$BMD) && bmd_row$BMD >= min(df$Dose) && bmd_row$BMD <= max(df$Dose)) {
+  bmd_pred <- predict(fit, newdata = data.frame(Dose = bmd_row$BMD))
+  
+  bmd_points <- bind_rows(bmd_points, data.frame(
+    Chemical = chem,
+    Marker = marker,
+    Source = source,
+    BMD = bmd_row$BMD,
+    BMDL = bmd_row$BMDL,
+    BMDU = bmd_row$BMDU,
+    BMD_Y = bmd_pred
+  ))
+  }
+}
+
+
+
+# Function to create plots per source and marker with fixed 5 y-ticks
+make_plots <- function(source_label, raw_data, model_data, bmd_data, x_breaks = 10, y_breaks = 10, color_val, jitter_height = 1000) {
+  markers <- unique(raw_data$Marker[raw_data$Source == source_label])
+  
+  plots <- lapply(markers, function(m) {
+    df_raw <- raw_data %>% filter(Source == source_label, Marker == m, x > 0)
+    df_fit <- model_data %>% filter(Source == source_label, Marker == m, Dose > 0)
+    df_bmd <- bmd_data %>% filter(Source == source_label, Marker == m, BMD > 0)
+    
+    # Calculate manual y-axis breaks for exactly y_breaks ticks
+    y_range <- range(c(df_raw$Conc, df_fit$fit, df_bmd$BMD_Y), na.rm = TRUE)
+    y_break_vec <- pretty(y_range, n = y_breaks)
+    
+    ggplot() +
+      geom_jitter(data = df_raw,
+                  aes(x = log10(x), y = Conc, color = Source, shape = Sex),
+                  alpha = 0.6, size = 1.8) +
+      geom_line(data = df_fit,
+                aes(x = log10(Dose), y = fit, color = Source, linetype = Source), size = 1) +
+      geom_point(data = df_bmd,
+                 aes(x = log10(BMD), y = BMD_Y), shape = 16, size = 3, color = "black") +
+      geom_errorbarh(data = df_bmd,
+                     aes(y = BMD_Y, xmin = log10(BMDL), xmax = log10(BMDU)),
+                     height = ifelse(source_label == "In Vitro", jitter_height, 15), color = "black") +
+      scale_x_continuous(breaks = pretty_breaks(n = x_breaks)) +
+      scale_y_continuous(breaks = y_break_vec) +
+      scale_shape_manual(values = c("Female" = 17, "Male" = 16)) +
+      scale_color_manual(values = setNames(color_val, source_label)) +
+      labs(title = m,
+           x = "Dose (log10 scale)", y = "Response") +
+      theme_minimal() +
+      theme(
+        text = element_text(family = "Arial", size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none",
+        panel.grid.major = element_line(size = 0.5),
+        panel.grid.minor = element_blank(),
+        strip.text = element_text(face = "bold")
+      )
+  })
+  
+  wrap_plots(plots, nrow = 1)
+}
+
+# Create In Vitro and In Vivo plots
+p_invitro <- make_plots("In Vitro", raw_combined, models_combined, bmd_points, x_breaks = 6, y_breaks = 5, color_val = "#7e03a8", jitter_height = 1000)
+p_invivo <- make_plots("In Vivo", raw_combined, models_combined, bmd_points, x_breaks = 6, y_breaks = 5, color_val = "#ed7953", jitter_height = 15)
+
+# To display side-by-side:
+p<- p_invitro + p_invivo + plot_annotation(title = "Dose-Response Plots In Vitro and In Vivo")
+
+ggsave("drc2.png", p, width = 8, height = 4)
+```
+
+
+
+

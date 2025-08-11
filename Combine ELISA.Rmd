@@ -1,0 +1,637 @@
+#Load libraries
+```{r}
+library(readxl)
+library(tidyr)  
+library(dplyr)   
+library(ggsignif)
+library(ggplot2)
+library(broom) 
+library(rstatix)
+library(ggpubr)
+library(stringr)
+library(viridis)
+library(emmeans)
+library(purrr)
+library(car)
+library(plotrix)
+library(extrafont)
+
+output_dir <- "../ELISA (PBMCs)/plots_output/"
+dir.create(output_dir, showWarnings = FALSE)
+custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+
+```
+
+#Load data
+```{r}
+data_elisa <- read.csv("../ELISA (PBMCs)/ELISA combined R input.csv")
+pha_data <- data_elisa %>%
+  filter(str_detect(Treatment, "PHA"))
+lps_data <- data_elisa %>%
+  filter(str_detect(Treatment, "LPS"))
+lps_data <- lps_data %>% filter(!(Chemical == "PFHxS" & Replicate == "M4"))
+lps_data <- lps_data %>% filter(!(Chemical == "GenX" & Replicate == "F4"))
+pha_data <- pha_data %>% filter(!(Chemical == "PFHxS" & Replicate == "M4"))
+pha_data <- pha_data %>% filter(!(Chemical == "GenX" & Replicate == "F4"))
+```
+
+#PHA
+```{r}
+pha_data <- pha_data %>%
+  group_by(Replicate, Marker, Chemical) %>%
+  mutate(has_vehicle = any(Dose == "Vehicle")) %>%
+  ungroup() %>%
+  filter(has_vehicle) %>%
+  select(-has_vehicle)
+
+significance_results <- list()
+
+
+pha_data <- pha_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+unique_chemicals <- unique(pha_data$Chemical)
+unique_markers <- unique(pha_data$Marker)
+
+for (chem in unique_chemicals) {
+  for (marker in unique_markers) {
+    chem_marker_data <- pha_data %>% filter(Chemical == chem, Marker == marker)
+    if (nrow(chem_marker_data) == 0) next  # Skip if no data for this combination
+    anova_model <- aov(Conc ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
+    tukey_results <- emmeans(anova_model, pairwise ~ Dose)
+    
+    pairwise_results <- as.data.frame(tukey_results$contrasts)
+    pairwise_results <- pairwise_results %>%
+      mutate(
+        significance = case_when(
+          p.value < 0.001 ~ "***",
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+          p.value >= 0.05 & p.value < 0.099 ~ "."
+        )
+      ) %>%
+      separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+      mutate(
+        group1 = str_replace_all(group1, "[()]", ""),
+        group2 = str_replace_all(group2, "[()]", "")
+      )
+    max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+    increment <- max_y * 0.05 
+
+    significance_labels <- pairwise_results %>%
+      filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+      mutate(y.position = max_y + (row_number() - 1) * increment)
+
+    significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+
+    p <- ggplot(chem_marker_data, aes(x = Dose, y = Conc, group = Replicate, color = Replicate)) +
+      geom_line(aes(linetype = Sex, group = Replicate), size = 1.2) +
+      geom_point(size = 3, alpha = 0.8) +
+      stat_summary(
+        aes(group = Dose),
+        fun = mean, geom = "point", shape = 95, size = 7, color = "black"  
+      ) +
+      facet_wrap(~ Marker) + 
+      labs(
+        title = paste("Concentration Response for", chem, "-", marker),
+        x = "Dose",
+        y = "Concentration (pg/mL)",
+        color = "Measurement Type",
+        shape = "Measurement Type",
+        linetype = "Sex"
+      ) +
+      theme_minimal() +
+      theme(
+        text = element_text(family = "Arial", size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "right",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(color = "black")
+      ) +
+      scale_color_viridis(option = "plasma", discrete = TRUE) +
+      scale_linetype_manual(values = c("Male" = "dotted", "Female" = "solid"))  
+    if (nrow(significance_labels) > 0) {
+      p <- p + geom_text(
+        data = significance_labels,
+        aes(x = factor(group2, levels = unique(chem_marker_data$Dose)), y = y.position, label = significance),
+        inherit.aes = FALSE,
+        size = 6
+      )
+    }
+
+    print(p)  
+  }
+}
+
+print(significance_results)
+chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
+
+pha_data <- pha_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+pha_data$Chemical <- factor(pha_data$Chemical, levels = chemical_order)
+
+mean_data <- pha_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(Conc, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(Conc) * 2.365,  # 95% CI
+    .groups = "drop"
+  )
+
+mean_data$Group <- "PHA"
+
+y_axis_limits <- c(-1500, 10000)
+
+vehicle_data_ribbon <- mean_data %>%
+  filter(Dose == "Vehicle") %>%
+  group_by(Group, Chemical, Marker) %>%
+  summarise(
+    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
+    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    mean_data %>%
+      group_by(Group, Chemical, Marker) %>%
+      summarise(x_min = min(log_Treatment, na.rm = TRUE), x_max = max(log_Treatment, na.rm = TRUE), .groups = "drop"),
+    by = c("Group", "Chemical", "Marker")
+  ) %>%
+  rowwise() %>%
+  mutate(log_Treatment = list(seq(x_min, x_max, length.out = 100))) %>%
+  unnest(cols = log_Treatment)
+
+for (chem in chemical_order) {
+  for (marker in unique(pha_data$Marker)) {
+    key <- paste(chem, marker, sep = "_")  
+
+    if (!is.null(significance_results[[key]])) {
+      mean_data$significance[mean_data$Chemical == chem & mean_data$Marker == marker] <- 
+        significance_results[[key]]$significance[match(
+          mean_data$Dose[mean_data$Chemical == chem & mean_data$Marker == marker], 
+          significance_results[[key]]$group2
+        )]
+    }
+  }
+}
+
+mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 2000
+
+replicate_data <- pha_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  # infer sex from Group prefix
+  )
+
+plot_file <- paste0(output_dir, "PHA_nosig.png")
+png(plot_file, width = 3750, height = 2100, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  geom_ribbon(data = vehicle_data_ribbon,
+              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
+              inherit.aes = FALSE,
+              alpha = 0.1) +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed") +
+  scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +  # solid circle and triangle for sex
+  
+  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 0,
+            check_overlap = FALSE)
+
+
+print(plot)
+dev.off()
+
+plot_file <- paste0(output_dir, "PHA_sig.png")
+png(plot_file, width = 3750, height = 2100, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  geom_ribbon(data = vehicle_data_ribbon,
+              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
+              inherit.aes = FALSE,
+              alpha = 0.1) +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed") +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+  
+  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 6,
+            check_overlap = FALSE)
+
+print(plot)
+dev.off()
+```
+
+#LPS
+```{r}
+lps_data <- lps_data %>%
+  group_by(Replicate, Marker, Chemical) %>%
+  mutate(has_vehicle = any(Dose == "Vehicle")) %>%
+  ungroup() %>%
+  filter(has_vehicle) %>%
+  select(-has_vehicle)
+
+significance_results <- list()
+
+lps_data <- lps_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)  
+  )
+
+unique_chemicals <- unique(lps_data$Chemical)
+unique_markers <- unique(lps_data$Marker)
+
+for (chem in unique_chemicals) {
+  for (marker in unique_markers) {
+    chem_marker_data <- lps_data %>% filter(Chemical == chem, Marker == marker)
+
+    if (nrow(chem_marker_data) == 0) next 
+
+    anova_model <- aov(Conc ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
+    tukey_results <- emmeans(anova_model, pairwise ~ Dose)
+    
+    pairwise_results <- as.data.frame(tukey_results$contrasts)
+
+    pairwise_results <- pairwise_results %>%
+      mutate(
+        significance = case_when(
+          p.value < 0.001 ~ "***",
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+        )
+      ) %>%
+      separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+      mutate(
+        group1 = str_replace_all(group1, "[()]", ""),
+        group2 = str_replace_all(group2, "[()]", "")
+      )
+
+    max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+    increment <- max_y * 0.05 
+
+    significance_labels <- pairwise_results %>%
+      filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+      mutate(y.position = max_y + (row_number() - 1) * increment)
+
+    significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+
+    p <- ggplot(chem_marker_data, aes(x = Dose, y = Conc, group = Replicate, color = Replicate)) +
+      geom_line(aes(linetype = Sex, group = Replicate), size = 1.2) +
+      geom_point(size = 3, alpha = 0.8) +
+      stat_summary(
+        aes(group = Dose),
+        fun = mean, geom = "point", shape = 95, size = 7, color = "black"  
+      ) +
+      facet_wrap(~ Marker) +  
+      labs(
+        title = paste("Concentration Response for", chem, "-", marker),
+        x = "Dose",
+        y = "Concentration (pg/mL)",
+        color = "Measurement Type",
+        shape = "Measurement Type",
+        linetype = "Sex"
+      ) +
+      theme_minimal() +
+      theme(
+        text = element_text(family = "Arial", size = 12),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "right",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(color = "black")
+      ) +
+      scale_color_viridis(option = "plasma", discrete = TRUE) +
+      scale_linetype_manual(values = c("Male" = "dotted", "Female" = "solid"))  
+
+    if (nrow(significance_labels) > 0) {
+      p <- p + geom_text(
+        data = significance_labels,
+        aes(x = factor(group2, levels = unique(chem_marker_data$Dose)), y = y.position, label = significance),
+        inherit.aes = FALSE,
+        size = 6
+      )
+    }
+
+    print(p)  
+  }
+}
+
+print(significance_results)
+chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
+
+lps_data <- lps_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)  
+  )
+
+
+lps_data$Chemical <- factor(lps_data$Chemical, levels = chemical_order)
+
+
+mean_data <- lps_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(Conc, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(Conc) * 2.365, 
+    .groups = "drop"
+  )
+
+  mean_data$Group <- "LPS"
+
+y_axis_limits <- c(-100, max(lps_data$Conc, na.rm = TRUE) * 1.2)
+
+vehicle_data_ribbon <- mean_data %>%
+  filter(Dose == "Vehicle") %>%
+  group_by(Group, Chemical, Marker) %>%
+  summarise(
+    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
+    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    mean_data %>%
+      group_by(Group, Chemical, Marker) %>%
+      summarise(x_min = min(log_Treatment, na.rm = TRUE), x_max = max(log_Treatment, na.rm = TRUE), .groups = "drop"),
+    by = c("Group", "Chemical", "Marker")
+  ) %>%
+  rowwise() %>%
+  mutate(log_Treatment = list(seq(x_min, x_max, length.out = 100))) %>%
+  unnest(cols = log_Treatment)
+
+plot_file <- paste0(output_dir, "lps_updated_combined.png")
+png(plot_file, width = 3000, height = 1000, res = 300)
+
+for (chem in chemical_order) {
+  for (marker in unique(lps_data$Marker)) {
+    key <- paste(chem, marker, sep = "_") 
+
+    if (!is.null(significance_results[[key]])) {
+      mean_data$significance[mean_data$Chemical == chem & mean_data$Marker == marker] <- 
+        significance_results[[key]]$significance[match(
+          mean_data$Dose[mean_data$Chemical == chem & mean_data$Marker == marker], 
+          significance_results[[key]]$group2
+        )]
+    }
+  }
+}
+
+
+mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 1000
+
+replicate_data <- lps_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  
+  )
+
+plot_file <- paste0(output_dir, "LPS_nosig.png")
+png(plot_file, width = 3750, height = 1000, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  geom_ribbon(data = vehicle_data_ribbon,
+              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
+              inherit.aes = FALSE,
+              alpha = 0.1) +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed") +
+  scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) + 
+  
+  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 0,
+            check_overlap = FALSE)
+
+
+print(plot)
+dev.off()
+
+plot_file <- paste0(output_dir, "LPS_sig.png")
+png(plot_file, width = 3750, height = 1000, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  geom_ribbon(data = vehicle_data_ribbon,
+              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
+              inherit.aes = FALSE,
+              alpha = 0.1) +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed") +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +  # solid circle and triangle for sex
+  
+  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 6,
+            check_overlap = FALSE)
+
+print(plot)
+dev.off()
+```
+#Extra Statitics
+##Two-way ANOVA (sex/smoking)
+```{r}
+lps_data <- lps_data %>%
+  mutate(Smokers = ifelse(Replicate %in% c("M1", "M3", "M4", "F1"), "Smoker", "Non-Smoker"))
+
+pha_data <- pha_data %>%
+  mutate(Smokers = ifelse(Replicate %in% c("M1", "M3", "M4", "F1"), "Smoker", "Non-Smoker"))
+
+perform_anova <- function(data, dataset_name) {
+  chemicals <- unique(data$Chemical)
+  for (chem in chemicals) {
+    cat("\n### ANOVA for Chemical:", chem, "in", dataset_name, "###\n")
+    chem_data <- data %>% filter(Chemical == chem)
+    chem_data <- chem_data %>%
+      mutate(Sex = factor(Sex),
+             Smokers = factor(Smokers),
+             Dose = factor(Dose),
+             Replicate = factor(Replicate))
+    model <- aov(Conc ~ Sex * Smokers + Error(Replicate / Dose), data = chem_data)
+    print(summary(model))
+  }
+}
+
+perform_anova(lps_data, "LPS")
+perform_anova(pha_data, "PHA")
+```
+
+##Normal and vairance testing
+```{r}
+combo_split <- split(pha_data, list(pha_data$Marker, pha_data$Chemical), drop = TRUE)
+
+levene_results <- list()
+shapiro_results <- list()
+
+for (combo_name in names(combo_split)) {
+  df <- combo_split[[combo_name]]
+  
+  cat("\n==========", combo_name, "==========\n")
+  
+  # Levene's Test
+  if (length(unique(df$Dose)) > 1) {
+    cat("Levene's Test:\n")
+    lev_result <- car::leveneTest(Conc ~ Dose, data = df)
+    print(lev_result)
+    levene_results[[combo_name]] <- lev_result
+  } else {
+    cat("Levene's Test: Not enough dose groups\n")
+    levene_results[[combo_name]] <- NA
+  }
+  
+  # Shapiro-Wilk Test
+  if (nrow(df) >= 3 && length(unique(df$Conc)) > 2) {
+    cat("\nShapiro-Wilk Test:\n")
+    shapiro_result <- shapiro.test(df$Conc)
+    print(shapiro_result)
+    shapiro_results[[combo_name]] <- shapiro_result
+  } else {
+    cat("\nShapiro-Wilk Test: Not enough data\n")
+    shapiro_results[[combo_name]] <- NA
+  }
+}
+
+############################################################################################################
+
+combo_split <- split(lps_data, list(lps_data$Marker, lps_data$Chemical), drop = TRUE)
+
+levene_results <- list()
+shapiro_results <- list()
+
+for (combo_name in names(combo_split)) {
+  df <- combo_split[[combo_name]]
+  
+  cat("\n==========", combo_name, "==========\n")
+  
+  # Levene's Test
+  if (length(unique(df$Dose)) > 1) {
+    cat("Levene's Test:\n")
+    lev_result <- car::leveneTest(Conc ~ Dose, data = df)
+    print(lev_result)
+    levene_results[[combo_name]] <- lev_result
+  } else {
+    cat("Levene's Test: Not enough dose groups\n")
+    levene_results[[combo_name]] <- NA
+  }
+  
+  # Shapiro-Wilk Test
+  if (nrow(df) >= 3 && length(unique(df$Conc)) > 2) {
+    cat("\nShapiro-Wilk Test:\n")
+    shapiro_result <- shapiro.test(df$Conc)
+    print(shapiro_result)
+    shapiro_results[[combo_name]] <- shapiro_result
+  } else {
+    cat("\nShapiro-Wilk Test: Not enough data\n")
+    shapiro_results[[combo_name]] <- NA
+  }
+}
+```
+
+
