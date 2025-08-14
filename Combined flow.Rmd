@@ -21,25 +21,25 @@ library(car)
 library(extrafont)
 library(plotrix)
 
-output_dir <- "../Flow cyto (PBMCs)/plots_output/"
+output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas//plots_output/"
 dir.create(output_dir, showWarnings = FALSE)
 custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 ```
 
 #Load data
 ```{r}
-data_PFNA <- read.csv("../Flow cyto (PBMCs)/Jan 9 2025 PFNA/09-Jan-2025.wsp FlowJo table.csv") %>%
+data_PFNA <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 9 2025 PFNA/09-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFNA")
-data_PFOA <- read.csv("../Flow cyto (PBMCs)/Dec 19 2024 PFOA/20-Dec-2024 (UNMIXING 1).wsp FlowJo table.csv") %>%
+data_PFOA <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Dec 19 2024 PFOA/20-Dec-2024 (UNMIXING 1).wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFOA")
-data_PFDA <- read.csv("../Flow cyto (PBMCs)/Jan 16 2025 PFDA/16-Jan-2025.wsp FlowJo table.csv") %>%
+data_PFDA <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 16 2025 PFDA/16-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFDA")
-data_PFHxS <- read.csv("../Flow cyto (PBMCs)/Jan 16 2025 PFHxS/16-Jan-2025.wsp FlowJo table.csv") %>%
+data_PFHxS <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 16 2025 PFHxS/16-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFHxS")
 data_PFHxS$X <- str_replace(data_PFHxS$X, "PFHxS\\+", "PFHxS +") #typo in one of the conditions
-data_PFOS <- read.csv("../Flow cyto (PBMCs)/Dec 12 2024 (new) PFOS/20-Dec-2024.wsp FlowJo table.csv") %>%
+data_PFOS <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/20-Dec-2024.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFOS")
-data_GenX <- read.csv("../Flow cyto (PBMCs)/Jan 31 2025 GenX/31-Jan-2025.wsp FlowJo table.csv") %>%
+data_GenX <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 31 2025 GenX/31-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "GenX")
 
 data <- bind_rows(data_PFNA, data_PFOA, data_PFDA, data_PFHxS, data_PFOS, data_GenX)
@@ -67,13 +67,14 @@ cleaned_data <- data %>%
     CD8_ud = cells.Single.Cells.live.CD8.CFSE...Area.subset.undivided...Freq..of.Parent....,
     Ms = cells.Single.Cells.live.Remainder...Freq..of.Parent....,
     Ms_fi = cells.Single.Cells.live.Remainder...Mean..CFSE...Area.,
-    Ms_ud = cells.Single.Cells.live.Remainder.undivided...Freq..of.Parent....
+    Ms_ud = cells.Single.Cells.live.Remainder.undivided...Freq..of.Parent....,
+    dead_fi = cells.Single.Cells.dead...Mean..CFSE...Area.
   ) %>%
   mutate(
     Sex = ifelse(str_starts(Group, "M"), "Male", "Female"),
     Smokers = ifelse(Group %in% c("M1", "M3", "M4", "F1"), "Smoker", "Non-Smoker")
   ) %>%
-  dplyr::select(Chemical, Sample, Group, Treatment, Sex, Smokers, CD3, CD3_fi, CD4, CD4_fi, CD8, CD8_fi, live, CD3_ud, CD4_ud, CD8_ud, Ms, Ms_fi, Ms_ud)
+  dplyr::select(Chemical, Sample, Group, Treatment, Sex, Smokers, CD3, CD3_fi, CD4, CD4_fi, CD8, CD8_fi, live, CD3_ud, CD4_ud, CD8_ud, Ms, Ms_fi, Ms_ud, dead_fi)
 
 cleaned_data <- cleaned_data %>%
   mutate(
@@ -99,7 +100,7 @@ cleaned_data <- cleaned_data %>%
       TRUE ~ Treatment
     )
   )
-numeric_columns <- c("CD3", "CD4", "CD8",  "live", "CD3_ud", "CD4_ud", "CD8_ud", "CD8_fi", "CD4_fi", "CD3_fi", "Ms", "Ms_fi", "Ms_ud")
+numeric_columns <- c("CD3", "CD4", "CD8",  "live", "CD3_ud", "CD4_ud", "CD8_ud", "CD8_fi", "CD4_fi", "CD3_fi", "Ms", "Ms_fi", "Ms_ud", "dead_fi")
 cleaned_data <- cleaned_data %>%
   mutate(across(all_of(numeric_columns), ~ as.numeric(gsub(",", ".", .))))
 
@@ -114,11 +115,11 @@ cleaned_data_pha <- cleaned_data %>% filter(str_detect(Treatment, "PHA"))
 selected_objects <- c("Sex", "Treatment","Group" , "Chemical", "CD3_fi", "CD4_fi", "CD8_fi")
 
 filtered_datasets <- cleaned_data_pha[names(cleaned_data_pha) %in% selected_objects]
-write.csv(filtered_datasets, "../Flow cyto (PBMCs)/Combined_flow_pha_fi.csv")
+write.csv(filtered_datasets, "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Combined_flow_pha_fi.csv")
 
 # Normalize
  normalize_by_vehicle <- function(df) {
-  numeric_columns <- c( "CD3_fi", "CD4_fi", "CD8_fi", "Ms_fi")
+  numeric_columns <- c( "CD3_fi", "CD4_fi", "CD8_fi", "Ms_fi", "dead_fi")
   
   for (col in numeric_columns) {
     vehicle_col <- paste0(col, "_vehicle")  
@@ -152,7 +153,7 @@ for (col in fi_columns) {
 pha_data <- normalized_data %>% filter(str_detect(Treatment, "PHA"))
 lps_data <- normalized_data %>% filter(str_detect(Treatment, "LPS"))
 
-columns <- c("live", "CD3", "CD4", "CD8", "CD3_fi", "CD4_fi", "CD8_fi","CD3_divided", "CD4_divided", "CD8_divided", "CD4_fi_reciprocal", "CD3_fi_reciprocal", "CD8_fi_reciprocal", "Ms", "Ms_fi_reciprocal", "Ms_divided")
+columns <- c("live", "CD3", "CD4", "CD8", "CD3_fi", "CD4_fi", "CD8_fi","CD3_divided", "CD4_divided", "CD8_divided", "CD4_fi_reciprocal", "CD3_fi_reciprocal", "CD8_fi_reciprocal", "Ms", "Ms_fi_reciprocal", "Ms_divided", "dead_fi_reciprocal")
 
 create_datasets <- function(data, prefix) {
   map(columns, ~ data %>%
@@ -393,7 +394,6 @@ datasets <- lapply(datasets, function(df) {
 selected_objects <- c("PHA_CD3_divided", "PHA_CD4_divided", "PHA_CD8_divided")
 
 filtered_datasets <- datasets[names(datasets) %in% selected_objects]
-write.csv(filtered_datasets, "../Flow cyto (PBMCs)/Combined_flow_pha.csv")
 combined_data <- data.frame()
 significance_results <- list()
 
@@ -952,6 +952,7 @@ plot <- ggplot() +
 print(plot)
 dev.off()
 ```
+
 #LPS
 ##Heatmap LPS
 ```{r}
