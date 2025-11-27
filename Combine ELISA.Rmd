@@ -24,7 +24,7 @@ custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 
 #Load data
 ```{r}
-data_elisa <- read.csv("../ELISA (PBMCs)/ELISA combined R input.csv")
+data_elisa <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/ELISA (PBMCs)/ELISA combined R input.csv")
 pha_data <- data_elisa %>%
   filter(str_detect(Treatment, "PHA"))
 lps_data <- data_elisa %>%
@@ -263,20 +263,23 @@ plot <- ggplot() +
   scale_fill_manual(values = custom_colors) +
   scale_shape_manual(values = c(Male = 21, Female = 24)) +
   
-  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
   theme_minimal() +
   theme(
-    text = element_text(family = "Arial", size = 12),
+   text = element_text(family = "Arial", size = 10),
     axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
     legend.position = "bottom",
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
+    guides(color = "none", fill = "none") +
   geom_text(data = mean_data[!is.na(mean_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 6,
             check_overlap = FALSE)
-
+saveRDS(plot, file = "../pmplot/R/myexample.rds")
 print(plot)
 dev.off()
 ```
@@ -505,6 +508,7 @@ plot <- ggplot() +
   geom_point(data = mean_data,
              aes(x = log_Treatment, y = mean_stat, color = Chemical),
              size = 2) +
+  
   geom_errorbar(data = mean_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
@@ -516,22 +520,25 @@ plot <- ggplot() +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
  scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
-  scale_shape_manual(values = c(Male = 21, Female = 24)) +  # solid circle and triangle for sex
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
   
-  labs(x = "Log10 Concentration (µM)", y = "Percentage Divided (%)", color = "Chemical", shape = "Sex") +
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
   theme_minimal() +
   theme(
-    text = element_text(family = "Arial", size = 12),
+   text = element_text(family = "Arial", size = 10),
     axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
     legend.position = "bottom",
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
+    guides(color = "none", fill = "none") +
   geom_text(data = mean_data[!is.na(mean_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 6,
             check_overlap = FALSE)
-
+saveRDS(plot, file = "../pmplot/R/myexample2.rds")
 print(plot)
 dev.off()
 ```

@@ -21,9 +21,25 @@ library(car)
 library(extrafont)
 library(plotrix)
 
-output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas//plots_output/"
+output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/plots_output/"
 dir.create(output_dir, showWarnings = FALSE)
 custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+```
+#counts
+
+```{r}
+# Set the folder path
+path <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/count"
+
+files <- list.files(path, pattern = "\\.csv$", full.names = TRUE)
+data_list <- lapply(files, read.csv)
+count <- do.call(rbind, data_list)
+
+count$Count <- gsub(",", ".", count$Count)
+count<- count[!(count$X %in% c("Mean", "SD")), ]
+count$Count <- as.numeric(count$Count)
+
+mean(count$Count)
 ```
 
 #Load data
@@ -37,12 +53,30 @@ data_PFDA <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro
 data_PFHxS <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 16 2025 PFHxS/16-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFHxS")
 data_PFHxS$X <- str_replace(data_PFHxS$X, "PFHxS\\+", "PFHxS +") #typo in one of the conditions
-data_PFOS <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/20-Dec-2024.wsp FlowJo table.csv") %>%
+data_PFOS <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Dec 12 2024 PFOS/20-Dec-2024.wsp FlowJo table.csv") %>%
   mutate(Chemical = "PFOS")
 data_GenX <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/Jan 31 2025 GenX/31-Jan-2025.wsp FlowJo table.csv") %>%
   mutate(Chemical = "GenX")
 
 data <- bind_rows(data_PFNA, data_PFOA, data_PFDA, data_PFHxS, data_PFOS, data_GenX)
+data<- data[!(data$X %in% c("Mean", "SD")), ]
+
+data <- data %>%
+  mutate(
+    X = case_when(
+      str_detect(X, "PFHxS\\+ PHA100uM") ~ "PFHxS + PHA100uM",
+      str_detect(X, "PFHxS\\+ PHA0.5uM") ~ "PFHxS + PHA0.5uM",
+      TRUE ~ X  
+    )
+  )
+
+count$X <- trimws(count$X)
+count$Chemical <- trimws(count$Chemical)
+data$X <- trimws(data$X)
+data$Chemical <- trimws(data$Chemical)
+
+data <- data %>%
+  left_join(count, by = c("X", "Chemical"))
 
 cleaned_data <- data %>%
   mutate(
@@ -68,22 +102,15 @@ cleaned_data <- data %>%
     Ms = cells.Single.Cells.live.Remainder...Freq..of.Parent....,
     Ms_fi = cells.Single.Cells.live.Remainder...Mean..CFSE...Area.,
     Ms_ud = cells.Single.Cells.live.Remainder.undivided...Freq..of.Parent....,
-    dead_fi = cells.Single.Cells.dead...Mean..CFSE...Area.
+    dead_fi = cells.Single.Cells.dead...Mean..CFSE...Area.,
+    count = Count
   ) %>%
   mutate(
     Sex = ifelse(str_starts(Group, "M"), "Male", "Female"),
     Smokers = ifelse(Group %in% c("M1", "M3", "M4", "F1"), "Smoker", "Non-Smoker")
   ) %>%
-  dplyr::select(Chemical, Sample, Group, Treatment, Sex, Smokers, CD3, CD3_fi, CD4, CD4_fi, CD8, CD8_fi, live, CD3_ud, CD4_ud, CD8_ud, Ms, Ms_fi, Ms_ud, dead_fi)
+  dplyr::select(Chemical, Sample, Group, Treatment, Sex, Smokers, CD3, CD3_fi, CD4, CD4_fi, CD8, CD8_fi, live, CD3_ud, CD4_ud, CD8_ud, Ms, Ms_fi, Ms_ud, dead_fi, count)
 
-cleaned_data <- cleaned_data %>%
-  mutate(
-    Treatment = case_when(
-      str_detect(Treatment, "PFHxS\\+ PHA100uM") ~ "PFHxS + PHA100uM",
-      str_detect(Treatment, "PFHxS\\+ PHA0.5uM") ~ "PFHxS + PHA0.5uM",
-      TRUE ~ Treatment  
-    )
-  )
 
 cleaned_data <- cleaned_data %>%
   mutate(
@@ -100,7 +127,7 @@ cleaned_data <- cleaned_data %>%
       TRUE ~ Treatment
     )
   )
-numeric_columns <- c("CD3", "CD4", "CD8",  "live", "CD3_ud", "CD4_ud", "CD8_ud", "CD8_fi", "CD4_fi", "CD3_fi", "Ms", "Ms_fi", "Ms_ud", "dead_fi")
+numeric_columns <- c("CD3", "CD4", "CD8",  "live", "CD3_ud", "CD4_ud", "CD8_ud", "CD8_fi", "CD4_fi", "CD3_fi", "Ms", "Ms_fi", "Ms_ud", "dead_fi", "count")
 cleaned_data <- cleaned_data %>%
   mutate(across(all_of(numeric_columns), ~ as.numeric(gsub(",", ".", .))))
 
@@ -150,10 +177,22 @@ for (col in fi_columns) {
   normalized_data[[new_col_name]] <- 1 / normalized_data[[col]]
 }
 
-pha_data <- normalized_data %>% filter(str_detect(Treatment, "PHA"))
-lps_data <- normalized_data %>% filter(str_detect(Treatment, "LPS"))
 
-columns <- c("live", "CD3", "CD4", "CD8", "CD3_fi", "CD4_fi", "CD8_fi","CD3_divided", "CD4_divided", "CD8_divided", "CD4_fi_reciprocal", "CD3_fi_reciprocal", "CD8_fi_reciprocal", "Ms", "Ms_fi_reciprocal", "Ms_divided", "dead_fi_reciprocal")
+#filter to only include groups with great then 5k cells
+
+pha_data <- normalized_data %>% filter(str_detect(Treatment, "PHA"))
+pha_data <- pha_data %>%
+  filter(count >= 5000)
+mean(pha_data$count)
+
+
+lps_data <- normalized_data %>% filter(str_detect(Treatment, "LPS"))
+lps_data <- lps_data %>%
+  filter(count >= 5000)
+mean(lps_data$count)
+
+
+columns <- c("live", "CD3", "CD4", "CD8", "CD3_fi", "CD4_fi", "CD8_fi","CD3_divided", "CD4_divided", "CD8_divided", "CD4_fi_reciprocal", "CD3_fi_reciprocal", "CD8_fi_reciprocal", "Ms", "Ms_fi_reciprocal", "Ms_divided", "dead_fi_reciprocal", "count")
 
 create_datasets <- function(data, prefix) {
   map(columns, ~ data %>%
@@ -371,6 +410,27 @@ heatmap_plot <- ggplot(filtered_data, aes(x = Marker, y = Treatment, fill = mean
   facet_grid(~Chemical, space = "free", scales = "free", switch = "x")  
 print(heatmap_plot)
 dev.off()
+
+replicate_counts <- data.frame()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+      grepl("CD3", dataset_name) ~ "CD3",
+      grepl("CD4", dataset_name) ~ "CD4",
+      grepl("CD8", dataset_name) ~ "CD8"
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+
+replicate_counts
 ```
 
 
@@ -513,7 +573,7 @@ for (i in 1:nrow(filtered_data)) {
            dataset_name == filtered_data$Dataset[i],
            group2 == filtered_data$Treatment[i]) %>%
     slice_head(n = 1) %>%
-    select(significance) %>%
+    dplyr::select(significance) %>%
     pull() 
     if (length(match_significance) == 1) {
     filtered_data$significance[i] <- match_significance
@@ -545,7 +605,7 @@ vehicle_data_ribbon <- filtered_data %>%
 
   left_join(
     filtered_data %>%
-      select(Marker, Chemical, log_Treatment, mean_stat) %>%
+      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
       distinct(),
     by = c("Marker", "Chemical")
   ) %>%
@@ -661,6 +721,26 @@ plot <- ggplot() +
 
 print(plot)
 dev.off()
+replicate_counts <- data.frame()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+      grepl("CD3", dataset_name) ~ "CD3",
+      grepl("CD4", dataset_name) ~ "CD4",
+      grepl("CD8", dataset_name) ~ "CD8"
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+
+replicate_counts
 ```
 
 ##Supplemental PHA
@@ -799,7 +879,7 @@ for (i in 1:nrow(filtered_data)) {
            dataset_name == filtered_data$Dataset[i],
            group2 == filtered_data$Treatment[i]) %>%
     slice_head(n = 1) %>%   
-    select(significance) %>%
+    dplyr::select(significance) %>%
     pull()  
   
   if (length(match_significance) == 1) {
@@ -830,7 +910,7 @@ vehicle_data_ribbon <- filtered_data %>%
   ) %>%
   left_join(
     filtered_data %>%
-      select(Marker, Chemical, log_Treatment, mean_stat) %>%
+      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
       distinct(),
     by = c("Marker", "Chemical")
   ) %>%
@@ -951,6 +1031,27 @@ plot <- ggplot() +
 
 print(plot)
 dev.off()
+
+replicate_counts <- data.frame()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+     grepl("CD3", dataset_name) ~ "CD3",
+      grepl("CD4", dataset_name) ~ "CD4",
+      grepl("CD8", dataset_name) ~ "CD8",
+      grepl("live", dataset_name) ~ "live",
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+replicate_counts
 ```
 
 #LPS
@@ -969,6 +1070,7 @@ datasets <- lapply(datasets, function(df) {
 })
 selected_objects <- c("LPS_CD3_fi_reciprocal", "LPS_CD4_fi_reciprocal", "LPS_CD8_fi_reciprocal")
 filtered_datasets <- datasets[names(datasets) %in% selected_objects]
+
 combined_data <- data.frame()
 significance_results <- list()
 
@@ -980,9 +1082,9 @@ for (dataset_name in names(filtered_datasets)) {
     anova_model <- aov(Statistic ~ Treatment + Error(Group/Treatment), data = chem_data)
     anova_summary <- summary(anova_model)
 cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\n")
-    print(anova_summary) treatment_p <- tryCatch({
-
-      treatment_effect <- anova_summary[[2]][[1]] 
+    print(anova_summary) 
+    treatment_p <- tryCatch({
+    treatment_effect <- anova_summary[[2]][[1]] 
       p_val <- treatment_effect["Treatment", "Pr(>F)"]
       if (is.na(p_val)) 1 else p_val
     }, error = function(e) {
@@ -1030,19 +1132,18 @@ significance_df <- data.frame()
 
 for (dataset_name in names(significance_results)) {
   for (chem in names(significance_results[[dataset_name]])) {
-    significance_labels <- significance_results[[dataset_name]][[chem]]
+       significance_labels <- significance_results[[dataset_name]][[chem]]
+
     significance_labels$chemical <- chem
     significance_labels$dataset_name <- dataset_name
+    
     significance_df <- rbind(significance_df, significance_labels)
 }
 }
-
 significance_df <- significance_df %>%
   arrange(chemical, dataset_name)
 
-
 head(significance_df)
-
 
 combined_data <- data.frame()
 
@@ -1087,7 +1188,7 @@ for (i in 1:nrow(filtered_data)) {
            dataset_name == filtered_data$Dataset[i],
            group2 == filtered_data$Treatment[i]) %>%
     slice_head(n = 1) %>%   
-    select(significance) %>%
+    dplyr::select(significance) %>%
     pull()
   if (length(match_significance) == 1) {
     filtered_data$significance[i] <- match_significance
@@ -1146,6 +1247,26 @@ heatmap_plot <- ggplot(filtered_data, aes(x = Marker, y = Treatment, fill = mean
 
 print(heatmap_plot)
 dev.off()
+replicate_counts <- data.frame()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+      grepl("CD3", dataset_name) ~ "CD3",
+      grepl("CD4", dataset_name) ~ "CD4",
+      grepl("CD8", dataset_name) ~ "CD8"
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+
+replicate_counts
 ```
 
 ##Dose-response LPS
@@ -1161,7 +1282,7 @@ datasets <- lapply(datasets, function(df) {
   df %>%
     filter(!(Chemical == "GenX" & Group == "F4"))
 })
-selected_objects <- c("LPS_Ms_divided")
+selected_objects <- c("LPS_Ms_divided", "LPS_live")
 filtered_datasets <- datasets[names(datasets) %in% selected_objects]
 combined_data <- data.frame()
 significance_results <- list()
@@ -1280,8 +1401,9 @@ for (i in 1:nrow(filtered_data)) {
            dataset_name == filtered_data$Dataset[i],
            group2 == filtered_data$Treatment[i]) %>%
     slice_head(n = 1) %>%  
-    select(significance) %>%
-    pull() if (length(match_significance) == 1) {
+    dplyr::select(significance) %>%
+    pull() 
+  if (length(match_significance) == 1) {
     filtered_data$significance[i] <- match_significance
   } else {
     filtered_data$significance[i] <- NA  
@@ -1309,7 +1431,7 @@ vehicle_data_ribbon <- filtered_data %>%
   ) %>%
   left_join(
     filtered_data %>%
-      select(Marker, Chemical, log_Treatment, mean_stat) %>%
+      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
       distinct(),
     by = c("Marker", "Chemical")
   ) %>%
@@ -1424,6 +1546,26 @@ plot <- ggplot() +
 
 print(plot)
 dev.off()
+
+replicate_counts <- data.frame()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+    grepl("Ms", dataset_name) ~ "Non t-cells",
+      grepl("live", dataset_name) ~ "Live"
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+
+replicate_counts
 ```
 
 ##Supplemental LPS
@@ -1563,7 +1705,7 @@ for (i in 1:nrow(filtered_data)) {
            dataset_name == filtered_data$Dataset[i],
            group2 == filtered_data$Treatment[i]) %>%
     slice_head(n = 1) %>%  
-    select(significance) %>%
+    dplyr::select(significance) %>%
     pull() 
 
   if (length(match_significance) == 1) {
@@ -1595,7 +1737,7 @@ vehicle_data_ribbon <- filtered_data %>%
 
   left_join(
     filtered_data %>%
-      select(Marker, Chemical, log_Treatment, mean_stat) %>%
+      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
       distinct(),
     by = c("Marker", "Chemical")
   ) %>%
@@ -1712,6 +1854,23 @@ plot <- ggplot() +
 
 print(plot)
 dev.off()
+
+for (dataset_name in names(filtered_datasets)) {
+  
+  dataset <- filtered_datasets[[dataset_name]]
+  
+  dataset_rep_counts <- dataset %>%
+    group_by(Chemical, Treatment, Marker = case_when(
+    grepl("Ms", dataset_name) ~ "Non t-cells",
+      grepl("live", dataset_name) ~ "Live"
+    )) %>%
+    summarise(n_replicates = n(), .groups = "drop")
+  
+  dataset_rep_counts$Dataset <- dataset_name
+  
+  replicate_counts <- bind_rows(replicate_counts, dataset_rep_counts)
+}
+
 ```
 #Extra Statitics
 ##Two-way ANOVA (sex/smoking)
@@ -1768,6 +1927,8 @@ lapply(datasets, function(dataset) {
   qqnorm(dataset$Statistic)
   qqline(dataset$Statistic)
 })
+
 ```
+
 
 

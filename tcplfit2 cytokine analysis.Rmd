@@ -27,7 +27,7 @@ custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 #Load in vitro
 ```{r}
 # Load and filter
-data_elisa <- read.csv("../ELISA (PBMCs)/ELISA combined R input.csv")
+data_elisa <- read.csv("/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/ELISA (PBMCs)/ELISA combined R input.csv")
 
 data_elisa <- data_elisa %>%
   filter(str_detect(Treatment, "PHA")) %>%
@@ -320,7 +320,7 @@ invivo <- invivo %>%
 chemicals <- unique(invivo$Chemical)
 
 # Cytokines to process
-markers <- unique(invivo$Marker)  # or c("IL.2", "TNF.a", "IFN.g") if you want to specify
+markers <- unique(invivo$Marker)  
 print(markers)
 # Initialize result storage
 out_results_invivo <- list()
@@ -538,9 +538,9 @@ combined_bmd_filtered <- combined_bmd %>%
     BMDU = ifelse(is.na(BMDL), NA, BMDU),
     
     
-    BMD = ifelse(BMDU / BMDL >= 40, NA, BMD),
-    BMDL = ifelse(BMDU / BMDL >= 40, NA, BMDL),
-    BMDU = ifelse(BMDU / BMDL >= 40, NA, BMDU)
+    BMD = ifelse(BMDU / BMDL >= 50, NA, BMD),
+    BMDL = ifelse(BMDU / BMDL >= 50, NA, BMDL),
+    BMDU = ifelse(BMDU / BMDL >= 50, NA, BMDU)
   )
 
 # Plot
@@ -718,7 +718,7 @@ make_plots <- function(source_label, raw_data, model_data, bmd_data, x_breaks = 
   
   wrap_plots(plots, nrow = 1)
 }
-
+library(patchwork)
 # Create In Vitro and In Vivo plots
 p_invitro <- make_plots("In Vitro", raw_combined, models_combined, bmd_points, x_breaks = 6, y_breaks = 5, color_val = "#7e03a8", jitter_height = 1000)
 p_invivo <- make_plots("In Vivo", raw_combined, models_combined, bmd_points, x_breaks = 6, y_breaks = 5, color_val = "#ed7953", jitter_height = 15)
