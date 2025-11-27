@@ -1,0 +1,842 @@
+#Load Libraries and Data
+```{r}
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)  
+library(biomaRt)
+library(enrichplot)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(ggrepel)
+library(pheatmap)
+library(forcats)
+library(readr)
+library(eulerr)
+library(edgeR)
+library(ggrepel)
+library(limma)
+library(patchwork)
+deg_f <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Female_02-10-2025.12.04-DESeq_all.csv")
+deg_m <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Male_02-10-2025.12.04-DESeq_all.csv")
+```
+
+
+
+#Volcano
+```{r}
+padj_thresh <- 0.05
+log2FC_thresh <- 0.5
+highlight_genes <- c(
+  "CYP1B1","AHRR", "IL1B", "CCR4", "CSF2", "TNFSF15", "POU2AF1", "IGKC", "IGLV2-14", "IGLC1", "IGLC2", "IGLC3",
+  "IGHG1", "IGHV3-23"
+)
+
+# Function to make volcano plot
+make_volcano <- function(df, title=NULL) {
+  df <- df %>%
+    mutate(Significant = case_when(
+      padj < padj_thresh & log2FoldChange > log2FC_thresh  ~ "Up",
+      padj < padj_thresh & log2FoldChange < -log2FC_thresh ~ "Down",
+      TRUE ~ "NS"
+    ))
+  
+  ggplot(df, aes(x=log2FoldChange, y=-log10(padj), color=Significant)) +
+    geom_point(alpha=0.6) +
+    scale_color_manual(values=c("Up"="maroon", "Down"="navy", "NS"="grey")) +
+    theme_minimal() +
+    labs(title=title, x="log2(Fold Change)", y="-log10(adjusted p-value)")
+}
+
+# List unique contrasts for each sex
+contrasts_f <- unique(deg_f$contrast)
+contrasts_m <- unique(deg_m$contrast)
+
+# 1. Volcano plots for females
+for (c in contrasts_f) {
+  p <- make_volcano(deg_f %>% filter(contrast==c), title=paste("Female:", c))
+  print(p)
+}
+
+# 2. Volcano plots for males
+for (c in contrasts_m) {
+  p <- make_volcano(deg_m %>% filter(contrast==c), title=paste("Male:", c))
+  print(p)
+}
+
+# Combine male + female
+deg_combined <- bind_rows(
+  deg_f %>% mutate(Sex="Female"),
+  deg_m %>% mutate(Sex="Male")
+)
+
+# Add significance labels
+deg_combined <- deg_combined %>%
+  mutate(Significant = case_when(
+    padj < padj_thresh & log2FoldChange > log2FC_thresh  ~ "Up",
+    padj < padj_thresh & log2FoldChange < -log2FC_thresh ~ "Down",
+    TRUE ~ "NS"
+  ))
+deg_combined <- deg_combined %>%
+  mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", ""))
+deg_combined <- deg_combined %>%
+  mutate(highlight = ifelse(Gene_Symbol %in% highlight_genes, Gene_Symbol, NA))
+
+deg_combined$contrast_clean <- factor(
+  deg_combined$contrast_clean,
+  levels = c("PFOS vs Control", "PFOA vs Control", "PFNA vs Control")  # <-- order you want
+)
+
+volcano <- ggplot(deg_combined, aes(x = log2FoldChange, y = -log10(padj),
+                                    color = Significant, shape = Sex)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = c("Up" = "maroon", "Down" = "navy", "NS" = "grey")) +
+  geom_point(data = subset(deg_combined, !is.na(highlight) & Significant != "NS"),
+             aes(x = log2FoldChange, y = -log10(padj)),
+             color = "black", size = 2, shape = 21, stroke = 0.8) +
+  
+  ggrepel::geom_text_repel(
+  data = subset(deg_combined, !is.na(highlight) & Significant != "NS"),
+  aes(label = highlight),
+  size = 4,
+  max.overlaps = 25,       
+  force = 10,  
+    box.padding   = unit(0.75, "lines"),
+  point.padding = unit(0.75, "lines"),
+  min.segment.length = 0,  # increase repulsion strength
+  force_pull = 2,   
+  show.legend = FALSE) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dotted", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "black") +
+  theme_minimal(base_size = 16) +
+  theme(text = element_text(family = "Arial", size = 16),
+        axis.text = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(color = "black")) +
+  labs(title = "Combined Male & Female Volcano Plots by Contrast",
+       x = "log2(Fold Change)",
+       y = "-log10(adjusted p-value)") +
+  facet_wrap(~contrast_clean, scales = "free") +
+  coord_cartesian(xlim = c(-6, 6), ylim = c(-25, 80))
+
+print(volcano)
+ggsave("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/volcano.png", plot = volcano, bg = "white", 
+       height = 5, width = 10)
+deg_combined %>%
+  filter(Significant %in% c("Up", "Down")) %>%
+  group_by(contrast_clean, Significant) %>%
+  summarise(n = n(), .groups = "drop")
+
+```
+#find common genes
+```{r}
+
+sig_filter <- function(df){
+  df %>%
+    filter(padj < 0.05 & abs(log2FoldChange) >= 0.5) %>%
+    select(Ensembl_Gene_ID, Gene_Symbol, contrast_clean, log2FoldChange, padj)
+}
+deg_f <- deg_f %>% mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", ""))
+deg_m <- deg_m %>% mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", ""))
+
+sig_f <- sig_filter(deg_f) %>% mutate(Sex = "Female")
+sig_m <- sig_filter(deg_m) %>% mutate(Sex = "Male")
+
+# --- Combine sexes ---
+sig_all <- bind_rows(sig_f, sig_m)
+
+# --- Find genes common across all chemicals ---
+# Assuming 'contrast_clean' has chemical names
+genes_by_chemical <- sig_all %>%
+  group_by(contrast_clean) %>%
+  summarise(Common_Genes = list(unique(Ensembl_Gene_ID)))
+
+# Intersect genes across all chemicals
+common_genes <- Reduce(intersect, genes_by_chemical$Common_Genes)
+
+# --- Subset sig_all to common genes ---
+deg_common <- sig_all %>% filter(Ensembl_Gene_ID %in% common_genes)
+num <- unique(deg_common$Gene_Symbol)
+# --- Write CSV ---
+write.csv(deg_common, "../invitro-pfas-immunotox/DEG_common_all_chemicals.csv", row.names = FALSE)
+
+# --- Optional: preview ---
+head(deg_common)
+```
+#Heatmap
+```{r}
+# Read counts table
+counts <- read_tsv("../invitro-pfas-immunotox/count_table.tsv") 
+gene_ids <- counts[[1]]
+counts_mat <- as.matrix(counts[,-1])
+rownames(counts_mat) <- gene_ids
+
+
+# --- 2. Get list of DE genes ---
+# Assume deg_combined has column 'Gene_Symbol' or 'Ensembl_Gene_ID' and Significant == "Up"/"Down"
+sig_genes <- deg_combined %>%
+  filter(Significant != "NS") %>% 
+  pull(Ensembl_Gene_ID) %>% 
+  unique()
+
+# Subset counts matrix to DE genes only
+counts_mat_sig <- counts_mat[rownames(counts_mat) %in% sig_genes, ]
+
+# --- 3. Define samples per chemical ---
+samples <- colnames(counts_mat_sig)
+
+pfna_samples <- samples[grepl("PFNA", samples)]
+pfoa_samples <- samples[grepl("PFOA", samples)]
+pfos_samples <- samples[grepl("PFOS", samples)]
+
+heat_colors <- colorRampPalette(c("navy", "white", "maroon"))(100)
+
+plot_heatmap <- function(chem_samples, chem_name){
+  mat <- counts_mat_sig[, chem_samples]
+  mat_log <- log2(mat + 1)  # log2 transform
+
+  # Sample annotation (sex)
+  annotation_col <- data.frame(
+    Sex = ifelse(grepl("_F", chem_samples), "Female", "Male")
+  )
+  rownames(annotation_col) <- chem_samples
+
+  # Annotation colors
+  ann_colors <- list(
+    Sex = c(Female = "pink", Male = "lightblue")
+  )
+
+  # Plot heatmap
+  pheatmap(mat_log,
+           scale = "row",             # z-score per gene
+             cluster_rows = TRUE,
+           cluster_cols = TRUE,
+           annotation_col = annotation_col,
+           annotation_colors = ann_colors,
+           show_rownames = FALSE,
+           fontsize_col = 10,
+           color = heat_colors,       # viridis plasma for heatmap
+           main = paste0("DE Genes Heatmap: ", chem_name))
+}
+
+# --- 5. Plot heatmaps ---
+plot_heatmap(pfna_samples, "PFNA")
+plot_heatmap(pfoa_samples, "PFOA")
+plot_heatmap(pfos_samples, "PFOS")
+```
+
+#PCA
+```{r}
+# --- Step 1: Metadata ---
+metadata <- data.frame(
+  sample = colnames(counts),
+  condition = sub("_.*", "", colnames(counts)),
+  sex = sub(".*_", "", colnames(counts))
+)
+
+# Remove first row if needed
+metadata <- metadata[-1, ]
+rownames(metadata) <- metadata$sample
+
+# --- Step 2: Normalize counts ---
+dge <- DGEList(counts = counts)
+dge <- calcNormFactors(dge)
+
+# log2 CPM
+logCPM <- cpm(dge, log = TRUE, prior.count = 1)
+
+# --- Step 3: PCA ---
+pca <- prcomp(t(logCPM))  # transpose: samples in rows
+
+# Percent variance explained
+percentVar <- round(100 * (pca$sdev^2 / sum(pca$sdev^2)), 1)
+
+# --- Step 4: Prepare PCA data frame ---
+# Make sure metadata matches PCA rows
+metadata <- metadata[rownames(metadata) %in% rownames(pca$x), ]
+
+pca_df <- data.frame(
+  PC1 = pca$x[,1],
+  PC2 = pca$x[,2],
+  condition = metadata$condition,
+  sex = metadata$sex,
+  sample = rownames(metadata)
+)
+install.packages("showtext")
+library(showtext)
+showtext_auto() 
+showtext_opts(dpi = 300)
+# --- Step 5: PCA plot with ellipses ---
+pca<-ggplot(pca_df, aes(x = PC1, y = PC2, color = sex, shape = condition)) +
+  geom_point(size = 4) +
+  stat_ellipse(aes(group = sex), level = 0.90, linetype = 2, linewidth = 0.25) +  # ellipses per sex
+  scale_color_viridis_d(option = "plasma") +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black")
+  )
+
+print(pca)
+ggsave("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/pca.png", dpi =300, bg = "white", height =5, width= 6)
+```
+
+
+#KEGG, GO, and Reactome 
+##Combined 
+```{r}
+# ===========================
+# --- Parameters ---
+# ===========================
+deg_f <- deg_f %>%
+  mutate(Significant = case_when(
+    padj < padj_thresh & log2FoldChange > log2FC_thresh  ~ "Up",
+    padj < padj_thresh & log2FoldChange < -log2FC_thresh ~ "Down",
+    TRUE ~ "NS"
+  )) %>%
+  filter(Significant != "NS")   # remove non-significant genes
+
+deg_m <- deg_m %>%
+  mutate(Significant = case_when(
+    padj < padj_thresh & log2FoldChange > log2FC_thresh  ~ "Up",
+    padj < padj_thresh & log2FoldChange < -log2FC_thresh ~ "Down",
+    TRUE ~ "NS"
+  )) %>%
+  filter(Significant != "NS")   # remove non-significant genes
+# ===========================
+# --- Function to map Ensembl to Entrez ---
+# ===========================
+ensembl_to_entrez <- function(ensembl_ids, species="hsapiens") {
+  mart <- useMart("ensembl", dataset=paste0(species,"_gene_ensembl"))
+  gene_map <- getBM(
+    attributes = c("ensembl_gene_id", "entrezgene_id"),
+    filters = "ensembl_gene_id",
+    values = ensembl_ids,
+    mart = mart
+  )
+  unique(gene_map$entrezgene_id[!is.na(gene_map$entrezgene_id)])
+}
+
+# ===========================
+# --- Enrichment functions ---
+# ===========================
+
+# GO BP
+run_go_per_contrast <- function(df, sex, direction="all", species="hsapiens") {
+  contrasts <- unique(df$contrast_clean)
+  go_all <- list()
+  
+  for(c in contrasts){
+    deg_sub <- df %>% filter(contrast_clean == c & padj < padj_thresh)
+    if(direction=="up") deg_sub <- deg_sub %>% filter(log2FoldChange > log2FC_thresh)
+    if(direction=="down") deg_sub <- deg_sub %>% filter(log2FoldChange < -log2FC_thresh)
+    if(direction=="all") deg_sub <- deg_sub %>% filter(abs(log2FoldChange) > log2FC_thresh)
+    if(nrow(deg_sub)==0) next
+    
+    entrez_ids <- ensembl_to_entrez(unique(deg_sub$Ensembl_Gene_ID), species)
+    if(length(entrez_ids)==0) next
+    
+    go_res <- enrichGO(
+      gene = entrez_ids,
+      OrgDb = org.Hs.eg.db,
+      keyType = "ENTREZID",
+      ont = "BP",
+      pAdjustMethod = "BH",
+      pvalueCutoff = 0.05,
+      qvalueCutoff = 0.05
+    )
+    
+    if(!is.null(go_res) && nrow(as.data.frame(go_res))>0){
+      go_all[[c]] <- as.data.frame(go_res) %>%
+        mutate(contrast_clean = c, Sex = sex, Direction = direction)
+    }
+  }
+  bind_rows(go_all)
+}
+
+# Reactome
+run_reactome_per_contrast <- function(df, sex, direction="all", species="hsapiens") {
+  contrasts <- unique(df$contrast_clean)
+  reactome_all <- list()
+  
+  for(c in contrasts){
+    deg_sub <- df %>% filter(contrast_clean == c & padj < padj_thresh)
+    if(direction=="up") deg_sub <- deg_sub %>% filter(log2FoldChange > log2FC_thresh)
+    if(direction=="down") deg_sub <- deg_sub %>% filter(log2FoldChange < -log2FC_thresh)
+    if(direction=="all") deg_sub <- deg_sub %>% filter(abs(log2FoldChange) > log2FC_thresh)
+    if(nrow(deg_sub)==0) next
+    
+    entrez_ids <- ensembl_to_entrez(unique(deg_sub$Ensembl_Gene_ID), species)
+    if(length(entrez_ids)==0) next
+    
+    reactome_res <- enrichPathway(
+      gene = entrez_ids,
+      organism = "human",
+      pvalueCutoff = 0.05,
+      pAdjustMethod = "BH",
+      qvalueCutoff = 0.05,
+      readable = TRUE
+    )
+    
+    if(!is.null(reactome_res) && nrow(as.data.frame(reactome_res))>0){
+      reactome_all[[c]] <- as.data.frame(reactome_res) %>%
+        mutate(contrast_clean = c, Sex = sex, Direction = direction)
+    }
+  }
+  bind_rows(reactome_all)
+}
+
+# KEGG
+run_kegg_per_contrast <- function(df, sex, direction="all", species="hsapiens") {
+  contrasts <- unique(df$contrast_clean)
+  kegg_all <- list()
+  
+  for(c in contrasts){
+    deg_sub <- df %>% filter(contrast_clean == c & padj < padj_thresh)
+    if(direction=="up") deg_sub <- deg_sub %>% filter(log2FoldChange > log2FC_thresh)
+    if(direction=="down") deg_sub <- deg_sub %>% filter(log2FoldChange < -log2FC_thresh)
+    if(direction=="all") deg_sub <- deg_sub %>% filter(abs(log2FoldChange) > log2FC_thresh)
+    if(nrow(deg_sub)==0) next
+    
+    entrez_ids <- ensembl_to_entrez(unique(deg_sub$Ensembl_Gene_ID), species)
+    if(length(entrez_ids)==0) next
+    
+    kegg_res <- enrichKEGG(
+      gene = entrez_ids,
+      organism = ifelse(species=="hsapiens","hsa","mmu"),
+      pvalueCutoff = 0.05,
+      pAdjustMethod = "BH"
+    )
+    
+    if(!is.null(kegg_res) && nrow(as.data.frame(kegg_res))>0){
+      df_kegg <- as.data.frame(kegg_res) %>%
+        mutate(contrast_clean = c, Sex = sex, Direction = direction) %>%
+        filter(qvalue < 0.05)  # retain only pathways with q-value < 0.05
+      if(nrow(df_kegg) > 0){
+        kegg_all[[c]] <- df_kegg
+      }
+    }
+  }
+  bind_rows(kegg_all)
+}
+
+# ===========================
+# --- Preprocess contrasts ---
+# ===========================
+deg_f <- deg_f %>% mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", ""))
+deg_m <- deg_m %>% mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", ""))
+
+# ===========================
+# --- Run GO, Reactome, KEGG (ignore direction) ---
+# ===========================
+# Female
+go_f_all       <- run_go_per_contrast(deg_f, sex="Female", direction="all")
+reactome_f_all <- run_reactome_per_contrast(deg_f, sex="Female", direction="all")
+kegg_f_all     <- run_kegg_per_contrast(deg_f, sex="Female", direction="all")
+
+# Male
+go_m_all       <- run_go_per_contrast(deg_m, sex="Male", direction="all")
+reactome_m_all <- run_reactome_per_contrast(deg_m, sex="Male", direction="all")
+kegg_m_all     <- run_kegg_per_contrast(deg_m, sex="Male", direction="all")
+
+# ===========================
+# --- Merge results ---
+# ===========================
+go_all_df       <- bind_rows(go_f_all, go_m_all)
+reactome_all_df <- bind_rows(reactome_f_all, reactome_m_all)
+kegg_all_df     <- bind_rows(kegg_f_all, kegg_m_all)
+
+# ===========================
+# --- Plotting function ---
+# ===========================
+plot_enrich_per_contrast <- function(enrich_df, contrast_name, title_prefix="GO BP") {
+  df_sub <- enrich_df %>% filter(contrast_clean == contrast_name)
+  if(nrow(df_sub)==0) return(NULL)
+  
+  top_enrich <- df_sub %>%
+    group_by(Sex) %>%
+    arrange(p.adjust) %>%
+    slice_head(n=5) %>%
+    ungroup() %>%
+    mutate(in_top5=TRUE)
+  
+  top_terms <- top_enrich %>% distinct(Description) %>% pull(Description)
+  
+  plot_df <- df_sub %>%
+    filter(Description %in% top_terms) %>%
+    left_join(top_enrich %>% dplyr::select(Sex, Description, in_top5),
+              by = c("Sex","Description")) %>%
+    mutate(
+      in_top5 = ifelse(is.na(in_top5), FALSE, TRUE),
+      logq = -log10(p.adjust + 1e-10),
+      shape_type = case_when(
+        Sex=="Male" & in_top5 ~ "Male Top5",
+        Sex=="Female" & in_top5 ~ "Female Top5",
+        Sex=="Male" & !in_top5 ~ "Male Shared",
+        Sex=="Female" & !in_top5 ~ "Female Shared"
+      )
+    )
+  
+  shape_values <- c("Male Top5"=17, "Female Top5"=16, "Male Shared"=2, "Female Shared"=1)
+  
+  ggplot(plot_df, aes(x=Sex, y=fct_reorder(Description, Count))) +
+    geom_point(aes(size=Count, color=logq, shape=shape_type), alpha=0.8) +
+    scale_shape_manual(values=shape_values) +
+    scale_color_viridis_c(option="plasma", name=expression(-log[10](p.adjust))) +
+    scale_size_continuous(name="Gene Count") +
+    labs(x="Sex", y=paste0(title_prefix," Term"), 
+         title=paste0(title_prefix," Pathways for contrast: ", contrast_name)) +
+    theme_bw() +
+    theme(axis.text.x=element_text(angle=45, hjust=1),
+          plot.title=element_text(hjust=0.5))
+}
+
+
+# ===========================
+# --- Generate and print plots ---
+# ===========================
+# GO
+plots_go <- lapply(unique(go_all_df$contrast_clean), function(c) plot_enrich_per_contrast(go_all_df, c, "GO BP"))
+for(p in plots_go) if(!is.null(p)) print(p)
+
+# Reactome
+plots_reactome <- lapply(unique(reactome_all_df$contrast_clean), function(c) plot_enrich_per_contrast(reactome_all_df, c, "Reactome"))
+for(p in plots_reactome) if(!is.null(p)) print(p)
+
+# KEGG
+plots_kegg <- lapply(unique(kegg_all_df$contrast_clean), function(c) plot_enrich_per_contrast(kegg_all_df, c, "KEGG"))
+for(p in plots_kegg) if(!is.null(p)) print(p)
+
+```
+
+
+## Common
+```{r}
+# ===========================
+# --- Function to get and plot common pathways (limit GO BP to top 10) ---
+# ===========================
+plot_common_pathways <- function(enrich_df, title_prefix="GO BP") {
+  # filter significant pathways
+  sig_df <- enrich_df %>% filter(p.adjust < 0.05)
+  
+  if(nrow(sig_df) == 0) return(NULL)
+  
+  # pathways by contrast
+  pathways_by_contrast <- split(sig_df$Description, sig_df$contrast_clean)
+  
+  # find pathways common across all contrasts
+  common_pathways <- Reduce(intersect, pathways_by_contrast)
+  
+  if(length(common_pathways) == 0){
+    message("No common ", title_prefix, " pathways across contrasts.")
+    return(NULL)
+  }
+  
+  # subset for common pathways
+  common_df <- sig_df %>% filter(Description %in% common_pathways)
+  
+  # if GO BP, limit to top 10 based on smallest p.adjust
+  if(title_prefix == "GO BP"){
+    top_terms <- common_df %>% 
+      arrange(p.adjust) %>% 
+      distinct(Description) %>% 
+      slice_head(n = 10) %>% 
+      pull(Description)
+    common_df <- common_df %>% filter(Description %in% top_terms)
+    common_pathways <- top_terms
+  }
+  
+  # plot
+  p <- ggplot(common_df, aes(x=contrast_clean, 
+                             y=reorder(Description, -p.adjust), 
+                             color=p.adjust, size=Count, shape=Sex)) +
+    geom_point(alpha=0.8) +
+    scale_color_viridis_c(option = "plasma") +
+    theme_minimal() +
+    labs(title=paste0("Common ", title_prefix, " Pathways Across Contrasts and Sexes"),
+         x="Contrast", y=paste0(title_prefix, " Term")) +
+    theme(axis.text.y = element_text(size=8),
+          axis.text.x = element_text(angle=45, hjust=1)) +
+    facet_wrap(~Sex)
+  
+  list(common_pathways=common_pathways, df=common_df, plot=p)
+}
+
+# ===========================
+# --- Apply to all three analyses ---
+# ===========================
+go_common <- plot_common_pathways(go_all_df, "GO BP")
+reactome_common <- plot_common_pathways(reactome_all_df, "Reactome")
+kegg_common <- plot_common_pathways(kegg_all_df, "KEGG")
+
+# ===========================
+# --- Print plots ---
+# ===========================
+for(p in list(go_common$plot, reactome_common$plot, kegg_common$plot)){
+  if(!is.null(p)) print(p)
+}
+
+# ===========================
+# --- Inspect common pathways ---
+# ===========================
+go_common$common_pathways
+reactome_common$common_pathways
+kegg_common$common_pathways
+
+```
+##Combined with Direction
+```{r}
+
+# Female
+go_f_up <- run_go_per_contrast(deg_f, "Female", "up")
+go_f_down <- run_go_per_contrast(deg_f, "Female", "down")
+reactome_f_up <- run_reactome_per_contrast(deg_f, "Female", "up")
+reactome_f_down <- run_reactome_per_contrast(deg_f, "Female", "down")
+kegg_f_up <- run_kegg_per_contrast(deg_f, "Female", "up")
+kegg_f_down <- run_kegg_per_contrast(deg_f, "Female", "down")
+
+# Male
+go_m_up <- run_go_per_contrast(deg_m, "Male", "up")
+go_m_down <- run_go_per_contrast(deg_m, "Male", "down")
+reactome_m_up <- run_reactome_per_contrast(deg_m, "Male", "up")
+reactome_m_down <- run_reactome_per_contrast(deg_m, "Male", "down")
+kegg_m_up <- run_kegg_per_contrast(deg_m, "Male", "up")
+kegg_m_down <- run_kegg_per_contrast(deg_m, "Male", "down")
+
+# Merge
+go_up_df <- bind_rows(go_f_up, go_m_up)
+go_down_df <- bind_rows(go_f_down, go_m_down)
+kegg_up_df <- bind_rows(kegg_f_up, kegg_m_up)
+kegg_down_df <- bind_rows(kegg_f_down, kegg_m_down)
+reactome_up_df <- bind_rows(reactome_f_up, reactome_m_up)
+reactome_down_df <- bind_rows(reactome_f_down, reactome_m_down)
+
+# just checking 
+all(go_up_df$qvalue < 0.05)  
+all(go_up_df$p.adjust < 0.05)  
+all(go_down_df$qvalue < 0.05)  
+all(go_down_df$p.adjust < 0.05)  
+all(kegg_up_df$qvalue < 0.05)  
+all(kegg_up_df$p.adjust < 0.05)  
+all(kegg_down_df$qvalue < 0.05)  
+all(kegg_down_df$p.adjust < 0.05) 
+
+# GO Up
+plots_go_up <- lapply(unique(go_up_df$contrast_clean), function(c) plot_enrich_per_contrast(go_up_df, c, "GO BP Up"))
+names(plots_go_up) <- unique(go_up_df$contrast_clean)
+
+for(name in names(plots_go_up)) {
+  p <- plots_go_up[[name]]
+  if(!is.null(p)) {
+    ggsave(filename = paste0("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/GO_BP_Up_", gsub(" ", "_", name), ".png"), plot = p, width = 8, height = 6)
+  }
+}
+
+# GO Down
+plots_go_down <- lapply(unique(go_down_df$contrast_clean), function(c) plot_enrich_per_contrast(go_down_df, c, "GO BP Down"))
+names(plots_go_down) <- unique(go_down_df$contrast_clean)
+
+for(name in names(plots_go_down)) {
+  p <- plots_go_down[[name]]
+  if(!is.null(p)) {
+    ggsave(filename = paste0("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/GO_BP_Down_", gsub(" ", "_", name), ".png"), plot = p, width = 8, height = 6)
+  }
+}
+
+# KEGG Up
+plots_kegg_up <- lapply(unique(kegg_up_df$contrast_clean), function(c) plot_enrich_per_contrast(kegg_up_df, c, "KEGG Up"))
+names(plots_kegg_up) <- unique(kegg_up_df$contrast_clean)
+
+for(name in names(plots_kegg_up)) {
+  p <- plots_kegg_up[[name]]
+  if(!is.null(p)) {
+    ggsave(filename = paste0("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/KEGG_Up_", gsub(" ", "_", name), ".png"), plot = p, width = 8, height = 6)
+  }
+}
+
+# KEGG Down
+plots_kegg_down <- lapply(unique(kegg_down_df$contrast_clean), function(c) plot_enrich_per_contrast(kegg_down_df, c, "KEGG Down"))
+names(plots_kegg_down) <- unique(kegg_down_df$contrast_clean)
+
+for(name in names(plots_kegg_down)) {
+  p <- plots_kegg_down[[name]]
+  if(!is.null(p)) {
+    ggsave(filename = paste0("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/KEGG_Down_", gsub(" ", "_", name), ".png"), plot = p, width = 8, height = 6)
+  }
+}
+```
+
+##Common with direction
+```{r}
+# ===========================
+# --- Combine male & female per direction ---
+# ===========================
+go_up_df       <- bind_rows(go_f_up, go_m_up)
+go_down_df     <- bind_rows(go_f_down, go_m_down)
+kegg_up_df     <- bind_rows(kegg_f_up, kegg_m_up)
+kegg_down_df   <- bind_rows(kegg_f_down, kegg_m_down)
+reactome_up_df <- bind_rows(reactome_f_up, reactome_m_up)
+reactome_down_df <- bind_rows(reactome_f_down, reactome_m_down)
+
+# ===========================
+# --- Find shared pathways (common across contrasts) ---
+# ===========================
+# GO
+go_common_up <- Reduce(intersect, split(go_up_df$Description, go_up_df$contrast_clean))
+go_common_down <- Reduce(intersect, split(go_down_df$Description, go_down_df$contrast_clean))
+
+# KEGG
+kegg_common_up <- Reduce(intersect, split(kegg_up_df$Description, kegg_up_df$contrast_clean))
+kegg_common_down <- Reduce(intersect, split(kegg_down_df$Description, kegg_down_df$contrast_clean))
+
+# Reactome
+reactome_common_up <- Reduce(intersect, split(reactome_up_df$Description, reactome_up_df$contrast_clean))
+reactome_common_down <- Reduce(intersect, split(reactome_down_df$Description, reactome_down_df$contrast_clean))
+
+# ===========================
+# --- Subset dfs for plotting ---
+# ===========================
+go_up_common_df       <- go_up_df %>% filter(Description %in% go_common_up)
+go_down_common_df     <- go_down_df %>% filter(Description %in% go_common_down)
+kegg_up_common_df     <- kegg_up_df %>% filter(Description %in% kegg_common_up)
+kegg_down_common_df   <- kegg_down_df %>% filter(Description %in% kegg_common_down)
+reactome_up_common_df <- reactome_up_df %>% filter(Description %in% reactome_common_up)
+reactome_down_common_df <- reactome_down_df %>% filter(Description %in% reactome_common_down)
+
+# ===========================
+# --- Plot shared pathways ---
+# ===========================
+plot_common <- function(df, title_prefix, top_n = 10){
+  if(nrow(df) == 0) return(NULL)
+  
+ 
+top_pathways <- df %>%
+  group_by(Description) %>%
+  summarize(avg_p = mean(qvalue), .groups = "drop") %>%
+  arrange(avg_p) %>%
+  slice_head(n = top_n) %>%
+  pull(Description)
+  
+  # Mark top vs non-top occurrences
+  df_plot <- df %>%
+    filter(Description %in% top_pathways) %>%
+    mutate(top_ranked = Description %in% top_pathways)  # all top pathways are TRUE
+  
+  # Split into top occurrences per contrast/sex and others
+  df_top <- df_plot %>%
+    group_by(contrast_clean, Sex) %>%
+    arrange(qvalue) %>%
+    slice_head(n = top_n) %>%
+    ungroup() %>%
+    mutate(top_ranked = TRUE)
+  
+  df_other <- df_plot %>%
+    anti_join(df_top, by = c("Description", "contrast_clean", "Sex")) %>%
+    mutate(top_ranked = FALSE)
+  
+  df_final <- bind_rows(df_top, df_other)
+  
+  # Plot
+  ggplot(df_final, aes(x=contrast_clean,
+                       y=Description,
+                       color=qvalue,
+                       size=Count)) +
+    geom_point(alpha=0.8) +
+    scale_color_viridis_c(option="plasma") +
+    labs(title=paste("Common", title_prefix, "Pathways Across Contrasts"),
+         x="Contrast", y=paste(title_prefix, "Pathway")) +
+   theme_bw(base_size = 14) +                     # consistent text size
+    theme(
+      panel.grid.major = element_line(color = "grey90"),
+      panel.grid.minor = element_blank(),
+      strip.background = element_blank(),    
+      strip.text = element_text(face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+     # axis.text.y = element_blank(),
+      plot.title = element_text(hjust = 0.5, face = "bold")
+    ) +
+    facet_wrap(~Sex)
+}
+
+contrast_levels <- c("PFOS vs Control", "PFOA vs Control", "PFNA vs Control")
+
+# List of data frame names
+df_names <- c(
+  "go_up_common_df", "go_down_common_df",
+  "kegg_up_common_df", "kegg_down_common_df"
+)
+
+# Loop over each data frame and update contrast_clean
+for (df in df_names) {
+  tmp <- get(df)  # retrieve data frame by name
+  if ("contrast_clean" %in% names(tmp)) {
+    tmp$contrast_clean <- factor(tmp$contrast_clean, levels = contrast_levels)
+  }
+  assign(df, tmp)  # save it back to the original name
+}
+
+# GO plots
+go_up_plot   <- plot_common(go_up_common_df, "GO BP (Up)")
+go_down_plot <- plot_common(go_down_common_df, "GO BP (Down)")
+
+# KEGG plots
+kegg_up_plot   <- plot_common(kegg_up_common_df, "KEGG (Up)")
+kegg_down_plot <- plot_common(kegg_down_common_df, "KEGG (Down)")
+
+# ===========================
+# --- Print plots ---
+# ===========================
+plots_list <- list(
+  go_up_plot = go_up_plot,
+  go_down_plot = go_down_plot,
+  kegg_up_plot = kegg_up_plot,
+  kegg_down_plot = kegg_down_plot
+)
+
+# Loop and save
+for (p_name in names(plots_list)) {
+  p <- plots_list[[p_name]]
+  
+  if(!is.null(p)) {
+    print(p)  # optional, to display
+    
+    # Save each plot
+    ggsave(
+      filename = paste0(
+        "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/",
+        p_name,
+        ".png"
+      ),
+      plot = p,
+      width = 10,
+      height = 4,
+      dpi = 300
+    )
+  }
+}
+# ===========================
+# --- Inspect common pathways ---
+# ===========================
+
+
+go_common_up
+go_common_down
+kegg_common_up
+kegg_common_down
+reactome_common_up
+reactome_common_down
+
+```
+
+
+
+

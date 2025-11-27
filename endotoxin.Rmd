@@ -1,0 +1,62 @@
+
+
+#Load data
+```{r}
+library(ggplot2)
+```
+#Conc calculated
+```{r}
+data <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/endotoxin testing/endotoxin.csv")
+data$Calc <- 0.005 
+custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+data$Chemical <- factor(data$Chemical,
+                        levels = c("PFOS", "PFOA", "PFNA","PFDA", "PFHxS", "GenX"))
+
+p<-ggplot(data, aes(x = Chemical, y = Calc, fill = Chemical)) +
+  geom_col() +
+  scale_fill_manual(values = custom_colors) +
+  geom_hline(yintercept = 0.1, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red", linewidth = 1) +
+  labs(
+    x = "Chemical",
+    y = "Concentration EU/mL",
+    fill = "Chemical"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none"
+  )
+
+```
+#Raw absorbance
+```{r}
+data <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/endotoxin testing/endotoxin (raw abs).csv")
+custom_colors <- c("black","#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+data$raw.absorbance <- factor(data$raw.absorbance,
+                        levels = c("balnk", "PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX"))
+
+p <- ggplot(data, aes(x = raw.absorbance, y = Average, fill = raw.absorbance)) +
+  geom_col(alpha = 0.6, color = "black") +
+  scale_fill_manual(values = custom_colors) +
+  geom_hline(yintercept = 1.599, linetype = "dashed", color = "red", linewidth = 0.3) +
+  geom_hline(yintercept = 0.515, linetype = "dashed", color = "red", linewidth = 0.3) +
+  labs(
+    x = "Chemical",
+    y = "Absorbance",
+    fill = "Chemical"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "black")
+  )+
+  scale_y_continuous(expand = c(0, 0))
+
+print(p)
+ggsave("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/endotoxin testing/plots/endotox.png", dpi =300, bg = "white", height =4, width= 5)
+```
+
