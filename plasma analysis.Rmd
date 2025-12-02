@@ -21,7 +21,7 @@ library(reshape)
 library(sjPlot)
 library(labelled)
 library(corrplot)
-  output_dir <- "../Plasma/plots_output/"
+  output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Plasma/plots_output/"
 dir.create(output_dir, showWarnings = FALSE)
 custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 
@@ -178,7 +178,7 @@ dev.off()
 ```
 ##All chems with LDL
 ```{r}
-data_Plasma <- read.csv("../Plasma/PFAS plasma results.csv")
+data_Plasma <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Plasma/PFAS plasma results.csv")
 
 data_Plasma <- subset(data_Plasma, select = -X)
 data_Plasma <- data_Plasma[-c(9:24), ]
@@ -213,12 +213,39 @@ compound_order <- filtered_data %>%
 
 filtered_data$Compound <- factor(filtered_data$Compound, levels = compound_order)
 
+filtered_data <- filtered_data %>%
+  mutate(MW = case_when(
+    Compound == "PFBA"      ~ 214.04,
+    Compound == "PFPeA"     ~ 264.04,
+    Compound == "PFHxA"     ~ 314.03,
+    Compound == "PFHpA"     ~ 364.02,
+    Compound == "PFOA"      ~ 414.01,
+    Compound == "PFNA"      ~ 463.99,
+    Compound == "PFDA"      ~ 513.98,
+    Compound == "PFUdA"     ~ 563.97,
+    Compound == "PFDoA"     ~ 613.96,
+    Compound == "PFTrDA"    ~ 663.94,
+    Compound == "PFTeDA"    ~ 713.93,
+    Compound == "PFBS"      ~ 299.09,
+    Compound == "PFPeS"     ~ 349.09,
+    Compound == "PFHxS"     ~ 399.08,
+    Compound == "PFHpS"     ~ 449.07,
+    Compound == "PFOS"      ~ 499.06,
+    Compound == "PFNS"      ~ 549.05,
+    Compound == "PFDS"      ~ 599.04,
+    Compound == "X4_2.FTS"  ~ 364.10,
+    Compound == "X6_2_FTS"  ~ 464.10,
+    Compound == "X8_2.FTS"  ~ 564.10,
+    TRUE ~ NA_real_
+  ))
+filtered_data$uM <- filtered_data$Value * 1000/ filtered_data$MW 
+
 print(head(filtered_data))
 
 plot_file <- paste0(output_dir, "all_chem_plasma.png")
 png(plot_file, width = 3000, height = 1000, res = 300)
 
-plot <- ggplot(filtered_data, aes(x = Compound, y = Value, color = Sample, group = Sample)) +
+plot <- ggplot(filtered_data, aes(x = Compound, y = uM, color = Sample, group = Sample)) +
   stat_summary(
     aes(fill = Sample),
     fun = mean, geom = "bar", position = position_dodge(width = 0.9), alpha = 0.6, color = "black"
@@ -239,8 +266,14 @@ plot <- ggplot(filtered_data, aes(x = Compound, y = Value, color = Sample, group
   ) +
   scale_fill_viridis(option = "plasma", discrete = TRUE) +
   scale_color_viridis(option = "plasma", discrete = TRUE, alpha = 1) +
-  scale_y_continuous(expand = c(0, 0), limits = c(0, max(filtered_data$Value, na.rm = TRUE) * 1.2)) + 
-  labs(y = "Concentration", x = "Compound", title = "PFAS Levels in Plasma with MDL")
+  scale_y_continuous(expand = c(0, 0), limits = c(0, max(filtered_data$uM, na.rm = TRUE) * 1.2)) + 
+  labs(y = "uM", x = "Compound", title = "PFAS Levels in Plasma with MDL")
+
 print(plot)
 dev.off()
+
+
+filtered_data %>%
+  group_by(Compound) %>%
+  summarise(mean_uM = mean(uM, na.rm = TRUE))
 ```

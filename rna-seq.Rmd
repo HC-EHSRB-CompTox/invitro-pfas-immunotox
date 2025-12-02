@@ -17,13 +17,9 @@ library(eulerr)
 library(edgeR)
 library(ggrepel)
 library(limma)
-library(patchwork)
 deg_f <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Female_02-10-2025.12.04-DESeq_all.csv")
 deg_m <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Male_02-10-2025.12.04-DESeq_all.csv")
 ```
-
-
-
 #Volcano
 ```{r}
 padj_thresh <- 0.05
@@ -161,22 +157,13 @@ common_genes <- Reduce(intersect, genes_by_chemical$Common_Genes)
 deg_common <- sig_all %>% filter(Ensembl_Gene_ID %in% common_genes)
 num <- unique(deg_common$Gene_Symbol)
 # --- Write CSV ---
-write.csv(deg_common, "../invitro-pfas-immunotox/DEG_common_all_chemicals.csv", row.names = FALSE)
+write.csv(deg_common, "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/DEG_common_all_chemicals.csv", row.names = FALSE)
 
 # --- Optional: preview ---
 head(deg_common)
 ```
 #Heatmap
 ```{r}
-# Read counts table
-counts <- read_tsv("../invitro-pfas-immunotox/count_table.tsv") 
-gene_ids <- counts[[1]]
-counts_mat <- as.matrix(counts[,-1])
-rownames(counts_mat) <- gene_ids
-
-
-# --- 2. Get list of DE genes ---
-# Assume deg_combined has column 'Gene_Symbol' or 'Ensembl_Gene_ID' and Significant == "Up"/"Down"
 sig_genes <- deg_combined %>%
   filter(Significant != "NS") %>% 
   pull(Ensembl_Gene_ID) %>% 
