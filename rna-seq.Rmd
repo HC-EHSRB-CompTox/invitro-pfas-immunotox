@@ -1,3 +1,10 @@
+
+```{r}
+#use_mit_license(copyright_holder  = "His Majesty the King")
+use_readme_rmd()
+```
+
+
 #Load Libraries and Data
 ```{r}
 library(clusterProfiler)

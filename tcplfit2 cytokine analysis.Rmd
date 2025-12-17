@@ -262,7 +262,7 @@ cat("Final rows for tcplfit2 input:", nrow(invivo), "\n")
 ```{r}
 data_conc <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Documents/invivo-pfas-immunotox/R input 56d/Plasma_PFAS_values_fixed_56d.csv")
 avg_conc <- data_conc %>%
-  group_by(group) %>%
+  group_by(Group) %>%
   summarize(
     mean_PFOS = mean(PFOS, na.rm = TRUE),
     mean_PFOA = mean(PFOA, na.rm = TRUE),
@@ -274,8 +274,9 @@ print(avg_conc)
 
 
 avg_conc_clean <- avg_conc %>%
-  filter(group != "Naive")
-
+  filter(Group != "Naive")
+avg_conc_clean <- avg_conc_clean %>%
+  rename(group = Group)
 # Step 2: Rename Vehicle → Control in invivo$Group (if needed)
 invivo <- invivo %>%
   mutate(group = ifelse(group == "control Vehicle", "Vehicle", group))

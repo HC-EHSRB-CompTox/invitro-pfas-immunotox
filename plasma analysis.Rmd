@@ -238,6 +238,8 @@ filtered_data <- filtered_data %>%
     Compound == "X8_2.FTS"  ~ 564.10,
     TRUE ~ NA_real_
   ))
+
+#ng/ml to um
 filtered_data$uM <- filtered_data$Value * 1000/ filtered_data$MW 
 
 print(head(filtered_data))
@@ -253,7 +255,7 @@ plot <- ggplot(filtered_data, aes(x = Compound, y = uM, color = Sample, group = 
   geom_errorbar(
     data = filtered_data %>% filter(!is.na(MDL)),
     aes(ymin = MDL, ymax = MDL),
-    color = "black", linetype = "dotted", width = 0.9, linewidth = 0.3
+   color = "black", linetype = "dotted", linewidth = 1
   ) +  
   theme_minimal() +
   theme(
