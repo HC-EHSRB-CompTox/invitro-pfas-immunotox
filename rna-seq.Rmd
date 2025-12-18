@@ -1,10 +1,3 @@
-
-```{r}
-#use_mit_license(copyright_holder  = "His Majesty the King")
-use_readme_rmd()
-```
-
-
 #Load Libraries and Data
 ```{r}
 library(clusterProfiler)
@@ -56,7 +49,6 @@ make_volcano <- function(df, title=NULL) {
 contrasts_f <- unique(deg_f$contrast)
 contrasts_m <- unique(deg_m$contrast)
 
-# 1. Volcano plots for females
 for (c in contrasts_f) {
   p <- make_volcano(deg_f %>% filter(contrast==c), title=paste("Female:", c))
   print(p)
@@ -130,7 +122,7 @@ ggsave("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/
        height = 5, width = 10)
 deg_combined %>%
   filter(Significant %in% c("Up", "Down")) %>%
-  group_by(contrast_clean, Significant) %>%
+  group_by(contrast_clean, Sex) %>%
   summarise(n = n(), .groups = "drop")
 
 ```
@@ -168,58 +160,6 @@ write.csv(deg_common, "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro
 
 # --- Optional: preview ---
 head(deg_common)
-```
-#Heatmap
-```{r}
-sig_genes <- deg_combined %>%
-  filter(Significant != "NS") %>% 
-  pull(Ensembl_Gene_ID) %>% 
-  unique()
-
-# Subset counts matrix to DE genes only
-counts_mat_sig <- counts_mat[rownames(counts_mat) %in% sig_genes, ]
-
-# --- 3. Define samples per chemical ---
-samples <- colnames(counts_mat_sig)
-
-pfna_samples <- samples[grepl("PFNA", samples)]
-pfoa_samples <- samples[grepl("PFOA", samples)]
-pfos_samples <- samples[grepl("PFOS", samples)]
-
-heat_colors <- colorRampPalette(c("navy", "white", "maroon"))(100)
-
-plot_heatmap <- function(chem_samples, chem_name){
-  mat <- counts_mat_sig[, chem_samples]
-  mat_log <- log2(mat + 1)  # log2 transform
-
-  # Sample annotation (sex)
-  annotation_col <- data.frame(
-    Sex = ifelse(grepl("_F", chem_samples), "Female", "Male")
-  )
-  rownames(annotation_col) <- chem_samples
-
-  # Annotation colors
-  ann_colors <- list(
-    Sex = c(Female = "pink", Male = "lightblue")
-  )
-
-  # Plot heatmap
-  pheatmap(mat_log,
-           scale = "row",             # z-score per gene
-             cluster_rows = TRUE,
-           cluster_cols = TRUE,
-           annotation_col = annotation_col,
-           annotation_colors = ann_colors,
-           show_rownames = FALSE,
-           fontsize_col = 10,
-           color = heat_colors,       # viridis plasma for heatmap
-           main = paste0("DE Genes Heatmap: ", chem_name))
-}
-
-# --- 5. Plot heatmaps ---
-plot_heatmap(pfna_samples, "PFNA")
-plot_heatmap(pfoa_samples, "PFOA")
-plot_heatmap(pfos_samples, "PFOS")
 ```
 
 #PCA

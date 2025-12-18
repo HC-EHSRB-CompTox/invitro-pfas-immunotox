@@ -202,8 +202,27 @@ create_datasets <- function(data, prefix) {
 }
 
 pha_datasets <- create_datasets(pha_data, "PHA")
-
 lps_datasets <- create_datasets(lps_data, "LPS")
+
+
+#Delta calc
+
+calculate_delta <- function(df, vehicle_name) {
+  df %>%
+    group_by(Group, Chemical) %>%
+    # Keep only groups that have a vehicle treatment
+    filter(any(Treatment == vehicle_name)) %>%
+    mutate(delta = Statistic - Statistic[Treatment == vehicle_name]) %>%
+    ungroup()
+}
+# Apply to PHA datasets
+pha_datasets <- lapply(pha_datasets, calculate_delta, vehicle_name = "PHA + Vehicle")
+
+# Apply to LPS datasets
+#LPS is missing some vehicles becasue of my count filtering
+
+lps_datasets<- lapply(lps_datasets, calculate_delta, vehicle_name = "LPS + Vehicle")
+
 datasets <- c(pha_datasets, lps_datasets)
 ```
 
@@ -438,6 +457,10 @@ replicate_counts
 ##Dose-response PHA
 
 ```{r}
+hline_data <- filtered_data %>%
+  distinct(Chemical) %>%  
+  mutate(y = 0)      
+
 chemical_order <- c("PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
 
 datasets <- lapply(datasets, function(df) {
@@ -464,7 +487,7 @@ for (dataset_name in names(filtered_datasets)) {
 
   for (chem in unique_chemicals) {
     chem_data <- dataset %>% filter(Chemical == chem)
-    anova_model <- aov(Statistic ~ Treatment + Error(Group/Treatment), data = chem_data)
+    anova_model <- aov(delta ~ Treatment + Error(Group/Treatment), data = chem_data)
     anova_summary <- summary(anova_model)
 cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\n")
     print(anova_summary)
@@ -496,7 +519,7 @@ cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\
           group2 = str_replace_all(group2, "[()]", "")
         )
 
-      max_y <- max(chem_data$Statistic, na.rm = TRUE)
+      max_y <- max(chem_data$delta, na.rm = TRUE)
       increment <- max_y * 0.05
 
       significance_labels <- pairwise_results %>%
@@ -536,8 +559,8 @@ for (dataset_name in names(filtered_datasets)) {
   mean_data <- dataset %>%
     group_by(Chemical, Treatment) %>%
     summarise(
-      mean_stat = mean(Statistic, na.rm = TRUE),
-      se_stat = std.error(Statistic) * 2.365,
+      mean_stat = mean(delta, na.rm = TRUE),
+      se_stat = std.error(delta) * 2.365,
       .groups = "drop"
     )
   
@@ -584,33 +607,6 @@ for (i in 1:nrow(filtered_data)) {
 }
 
 
-vehicle_data_ribbon <- filtered_data %>%
-  filter(Treatment == "Vehicle") %>%
-  group_by(Marker, Chemical) %>%
-  summarise(
-    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
-    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  left_join(
-    filtered_data %>%
-      group_by(Marker, Chemical) %>%
-      summarise(
-        x_min = min(log_Treatment, na.rm = TRUE),
-        x_max = max(log_Treatment, na.rm = TRUE),
-        .groups = "drop"
-      ),
-    by = c("Marker", "Chemical")
-  ) %>%
-
-  left_join(
-    filtered_data %>%
-      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
-      distinct(),
-    by = c("Marker", "Chemical")
-  ) %>%
-  mutate(log_Treatment = purrr::map2(x_min, x_max, ~seq(.x, .y, length.out = 100))) %>%
-  unnest(cols = c(log_Treatment)) 
 
 filtered_data$y_position_label <- filtered_data$mean_stat + filtered_data$se_stat + 5
 filtered_data <- filtered_data %>%
@@ -642,7 +638,7 @@ png(plot_file, width = 3750, height = 2100, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -652,10 +648,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
+   geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
@@ -670,7 +665,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 125)) +
+  coord_cartesian(ylim = c(-20, 50)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 0,
@@ -684,7 +679,7 @@ png(plot_file, width = 3750, height = 2100, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -694,11 +689,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
-  
+   geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
@@ -713,7 +706,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 125)) +
+  coord_cartesian(ylim = c(-20, 50)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 8,
@@ -743,6 +736,7 @@ for (dataset_name in names(filtered_datasets)) {
 replicate_counts
 ```
 
+
 ##Supplemental PHA
 ```{r}
 chemical_order <- c("PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
@@ -769,7 +763,7 @@ for (dataset_name in names(filtered_datasets)) {
   unique_chemicals <- unique(dataset$Chemical)
   for (chem in unique_chemicals) {
     chem_data <- dataset %>% filter(Chemical == chem)
-    anova_model <- aov(Statistic ~ Treatment + Error(Group/Treatment), data = chem_data)
+    anova_model <- aov(delta ~ Treatment + Error(Group/Treatment), data = chem_data)
     anova_summary <- summary(anova_model)
 cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\n")
     print(anova_summary)
@@ -800,7 +794,7 @@ cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\
           group2 = str_replace_all(group2, "[()]", "")
         )
 
-      max_y <- max(chem_data$Statistic, na.rm = TRUE)
+      max_y <- max(chem_data$delta, na.rm = TRUE)
       increment <- max_y * 0.05
 
       significance_labels <- pairwise_results %>%
@@ -843,8 +837,8 @@ for (dataset_name in names(filtered_datasets)) {
   mean_data <- dataset %>%
     group_by(Chemical, Treatment) %>%
     summarise(
-      mean_stat = mean(Statistic, na.rm = TRUE),
-      se_stat = std.error(Statistic) * 2.365,
+      mean_stat = mean(delta, na.rm = TRUE),
+      se_stat = std.error(delta) * 2.365,
       .groups = "drop"
     )
   
@@ -890,34 +884,6 @@ for (i in 1:nrow(filtered_data)) {
   }
 }
 
-vehicle_data_ribbon <- filtered_data %>%
-  filter(Treatment == "Vehicle") %>%
-  group_by(Marker, Chemical) %>%
-  summarise(
-    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
-    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  left_join(
-    filtered_data %>%
-      group_by(Marker, Chemical) %>%
-      summarise(
-        x_min = min(log_Treatment, na.rm = TRUE),
-        x_max = max(log_Treatment, na.rm = TRUE),
-        .groups = "drop"
-      ),
-    by = c("Marker", "Chemical")
-  ) %>%
-  left_join(
-    filtered_data %>%
-      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
-      distinct(),
-    by = c("Marker", "Chemical")
-  ) %>%
-  mutate(log_Treatment = purrr::map2(x_min, x_max, ~seq(.x, .y, length.out = 100))) %>%
-  unnest(cols = c(log_Treatment))  
-
-
 
 filtered_data$y_position_label <- filtered_data$mean_stat + filtered_data$se_stat + 5
 filtered_data <- filtered_data %>%
@@ -952,7 +918,7 @@ png(plot_file, width = 3750, height = 2800, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -962,10 +928,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
@@ -981,7 +946,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 125)) +
+  coord_cartesian(ylim = c(-30, 40)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 0,
@@ -990,11 +955,11 @@ plot <- ggplot() +
 print(plot)
 dev.off()
 plot_file <- paste0(output_dir, "PHA_sup_sig.png")
-png(plot_file, width = 3750, height = 1500, res = 300)
+png(plot_file, width = 3750, height = 2800, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -1004,10 +969,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
@@ -1022,7 +986,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 125)) +
+  coord_cartesian(ylim = c(-30, 40)) +
   
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
@@ -1228,7 +1192,7 @@ heatmap_plot <- ggplot(filtered_data, aes(x = Marker, y = Treatment, fill = mean
 print(heatmap_plot)
 dev.off()
 plot_file <- paste0(output_dir, "LPS_heat_sig.png")
-png(plot_file, width = 3000, height = 2000, res = 300)
+png(plot_file, width = 3750, height = 2800, res = 300)
 
 
 heatmap_plot <- ggplot(filtered_data, aes(x = Marker, y = Treatment, fill = mean_stat)) +
@@ -1294,7 +1258,7 @@ for (dataset_name in names(filtered_datasets)) {
 
   for (chem in unique_chemicals) {
     chem_data <- dataset %>% filter(Chemical == chem)
-    anova_model <- aov(Statistic ~ Treatment + Error(Group/Treatment), data = chem_data)
+    anova_model <- aov(delta ~ Treatment + Error(Group/Treatment), data = chem_data)
     anova_summary <- summary(anova_model)
 cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\n")
     print(anova_summary)
@@ -1326,7 +1290,7 @@ cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\
           group2 = str_replace_all(group2, "[()]", "")
         )
 
-      max_y <- max(chem_data$Statistic, na.rm = TRUE)
+      max_y <- max(chem_data$delta, na.rm = TRUE)
       increment <- max_y * 0.05
 
       significance_labels <- pairwise_results %>%
@@ -1368,14 +1332,16 @@ for (dataset_name in names(filtered_datasets)) {
   mean_data <- dataset %>%
     group_by(Chemical, Treatment) %>%
     summarise(
-      mean_stat = mean(Statistic, na.rm = TRUE),
-      se_stat = std.error(Statistic) * 2.365,
+      mean_stat = mean(delta, na.rm = TRUE),
+      se_stat = std.error(delta) * 2.365,
       .groups = "drop"
     )
   
   mean_data$Dataset <- dataset_name
   mean_data$Marker <- case_when(
-    grepl("Ms", dataset_name) ~ "Non t-cells"
+    grepl("Ms", dataset_name) ~ "Non t-cells",
+
+    grepl("live", dataset_name) ~ "live"
 )
   
   combined_data <- rbind(combined_data, mean_data)
@@ -1411,32 +1377,7 @@ for (i in 1:nrow(filtered_data)) {
 }
 
 
-vehicle_data_ribbon <- filtered_data %>%
-  filter(Treatment == "Vehicle") %>%
-  group_by(Marker, Chemical) %>%
-  summarise(
-    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
-    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  left_join(
-    filtered_data %>%
-      group_by(Marker, Chemical) %>%
-      summarise(
-        x_min = min(log_Treatment, na.rm = TRUE),
-        x_max = max(log_Treatment, na.rm = TRUE),
-        .groups = "drop"
-      ),
-    by = c("Marker", "Chemical")
-  ) %>%
-  left_join(
-    filtered_data %>%
-      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
-      distinct(),
-    by = c("Marker", "Chemical")
-  ) %>%
-  mutate(log_Treatment = purrr::map2(x_min, x_max, ~seq(.x, .y, length.out = 100))) %>%
-  unnest(cols = c(log_Treatment))  
+
 filtered_data$y_position_label <- filtered_data$mean_stat + filtered_data$se_stat + 5
 filtered_data <- filtered_data %>%
   group_by(Chemical, Marker) %>%
@@ -1455,18 +1396,18 @@ replicate_data <- do.call(rbind, filtered_datasets) %>%
     Dataset = rep(names(filtered_datasets), times = sapply(filtered_datasets, nrow)),
     Marker = case_when(
       grepl("Ms", Dataset) ~ "Non t-cells",
-      grepl("live", Dataset) ~ "Live"
+      grepl("live", Dataset) ~ "live"
     ),
     Sex = ifelse(str_starts(Group, "M"), "Male", "Female") 
   )
 
 plot_file <- paste0(output_dir, "LPS_nosig.png")
-png(plot_file, width = 3750, height = 1000, res = 300)
+png(plot_file, width = 3750, height = 1400, res = 300)
 
 plot <- ggplot() +
 
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -1476,11 +1417,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
-  
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
@@ -1495,7 +1434,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 100)) +
+  coord_cartesian(ylim = c(-30, 30)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 0,
@@ -1505,11 +1444,11 @@ print(plot)
 dev.off()
 
 plot_file <- paste0(output_dir, "LPS.png")
-png(plot_file, width = 3750, height = 1000, res = 300)
+png(plot_file, width = 3750, height = 1400, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -1519,11 +1458,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
-  
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
@@ -1538,7 +1475,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 100)) +
+  coord_cartesian(ylim = c(-30, 30)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 8,
@@ -1556,7 +1493,7 @@ for (dataset_name in names(filtered_datasets)) {
   dataset_rep_counts <- dataset %>%
     group_by(Chemical, Treatment, Marker = case_when(
     grepl("Ms", dataset_name) ~ "Non t-cells",
-      grepl("live", dataset_name) ~ "Live"
+      grepl("live", dataset_name) ~ "live"
     )) %>%
     summarise(n_replicates = n(), .groups = "drop")
   
@@ -1596,7 +1533,7 @@ for (dataset_name in names(filtered_datasets)) {
 
   for (chem in unique_chemicals) {
     chem_data <- dataset %>% filter(Chemical == chem)
-    anova_model <- aov(Statistic ~ Treatment + Error(Group/Treatment), data = chem_data)
+    anova_model <- aov(delta ~ Treatment + Error(Group/Treatment), data = chem_data)
     anova_summary <- summary(anova_model)
 cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\n")
     print(anova_summary)
@@ -1629,7 +1566,7 @@ cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\
           group2 = str_replace_all(group2, "[()]", "")
         )
 
-      max_y <- max(chem_data$Statistic, na.rm = TRUE)
+      max_y <- max(chem_data$delta, na.rm = TRUE)
       increment <- max_y * 0.05
 
       significance_labels <- pairwise_results %>%
@@ -1670,8 +1607,8 @@ for (dataset_name in names(filtered_datasets)) {
   mean_data <- dataset %>%
     group_by(Chemical, Treatment) %>%
     summarise(
-      mean_stat = mean(Statistic, na.rm = TRUE),
-      se_stat = std.error(Statistic) * 2.365,
+      mean_stat = mean(delta, na.rm = TRUE),
+      se_stat = std.error(delta) * 2.365,
       .groups = "drop"
     )
   
@@ -1716,34 +1653,6 @@ for (i in 1:nrow(filtered_data)) {
 }
 
 
-vehicle_data_ribbon <- filtered_data %>%
-  filter(Treatment == "Vehicle") %>%
-  group_by(Marker, Chemical) %>%
-  summarise(
-    ribbon_min = mean(mean_stat - se_stat, na.rm = TRUE),
-    ribbon_max = mean(mean_stat + se_stat, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  left_join(
-    filtered_data %>%
-      group_by(Marker, Chemical) %>%
-      summarise(
-        x_min = min(log_Treatment, na.rm = TRUE),
-        x_max = max(log_Treatment, na.rm = TRUE),
-        .groups = "drop"
-      ),
-    by = c("Marker", "Chemical")
-  ) %>%
-
-  left_join(
-    filtered_data %>%
-      dplyr::select(Marker, Chemical, log_Treatment, mean_stat) %>%
-      distinct(),
-    by = c("Marker", "Chemical")
-  ) %>%
-  mutate(log_Treatment = purrr::map2(x_min, x_max, ~seq(.x, .y, length.out = 100))) %>%
-  unnest(cols = c(log_Treatment)) 
-
 filtered_data$y_position_label <- filtered_data$mean_stat + filtered_data$se_stat + 5
 filtered_data <- filtered_data %>%
   group_by(Chemical, Marker) %>%
@@ -1775,7 +1684,7 @@ png(plot_file, width = 3750, height = 1400, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -1785,11 +1694,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-  geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
-  
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
@@ -1803,7 +1710,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 100)) +
+  coord_cartesian(ylim = c(-10, 50)) +
 
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
@@ -1817,7 +1724,7 @@ png(plot_file, width = 3750, height = 1400, res = 300)
 
 plot <- ggplot() +
   geom_jitter(data = replicate_data,
-           aes(x = log_Treatment, y = Statistic, fill = Chemical, color = Chemical, shape = Sex),
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
            stroke = 0.8,
            alpha =0.3,
            size = 1.5) +
@@ -1827,11 +1734,9 @@ plot <- ggplot() +
   geom_errorbar(data = filtered_data,
                 aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
                 width = 0.1) +
-    geom_ribbon(data = vehicle_data_ribbon,
-              aes(x = log_Treatment, ymin = ribbon_min, ymax = ribbon_max, fill = Chemical),
-              inherit.aes = FALSE,
-              alpha = 0.1) +
-  
+  geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
   facet_grid(Marker ~ Chemical, scales = "fixed") +
   scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
@@ -1846,7 +1751,7 @@ plot <- ggplot() +
     panel.grid.major = element_line(size = 0.5),
     panel.grid.minor = element_blank()
   ) +
-  coord_cartesian(ylim = c(0, 100)) +
+  coord_cartesian(ylim = c(-10, 50)) +
   geom_text(data = filtered_data[!is.na(filtered_data$significance), ],
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 8,
@@ -1892,7 +1797,7 @@ for (dataset_name in names(datasets)) {
   dataset$Sex <- as.factor(dataset$Sex)
   dataset$Smokers <- as.factor(dataset$Smokers)
   dataset$Treatment <- as.factor(dataset$Treatment)
-  model <- aov(Statistic ~ Sex * Smokers + Error(Group/Treatment), data = dataset)
+  model <- aov(delta ~ Sex * Smokers + Error(Group/Treatment), data = dataset)
   print(paste("Repeated Measures ANOVA results for dataset:", dataset_name))
   print(summary(model))
 }
@@ -1911,21 +1816,21 @@ datasets <- lapply(datasets, function(df) {
     filter(!(Chemical == "GenX" & Group == "F4"))
 })
 levene_results <- lapply(datasets, function(dataset) {
-  leveneTest(Statistic ~ Treatment, data = dataset)
+  leveneTest(delta ~ Treatment, data = dataset)
 })
 
 
 print(levene_results)
 
 shapiro_results <- lapply(datasets, function(dataset) {
-  shapiro.test(dataset$Statistic)
+  shapiro.test(dataset$delta)
 })
 
 print(shapiro_results)
 
 lapply(datasets, function(dataset) {
-  qqnorm(dataset$Statistic)
-  qqline(dataset$Statistic)
+  qqnorm(dataset$delta)
+  qqline(dataset$delta)
 })
 
 ```
