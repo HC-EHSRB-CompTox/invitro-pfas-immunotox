@@ -69,11 +69,14 @@ data <- rbind(lps_data, pha_data)
 hline_data <- data %>%
   distinct(Chemical) %>%  
   mutate(y = 0)      
+hline_data <- hline_data %>%
+  mutate(Chemical = factor(Chemical, levels = chemical_order))
 
 ```
 
 #PHA
 ```{r}
+
 significance_results <- list()
 
 
@@ -116,44 +119,6 @@ for (chem in unique_chemicals) {
       mutate(y.position = max_y + (row_number() - 1) * increment)
 
     significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
-
-    p <- ggplot(chem_marker_data, aes(x = Dose, y = delta, group = Replicate, color = Replicate)) +
-      geom_line(aes(linetype = Sex, group = Replicate), size = 1.2) +
-      geom_point(size = 3, alpha = 0.8) +
-      stat_summary(
-        aes(group = Dose),
-        fun = mean, geom = "point", shape = 95, size = 7, color = "black"  
-      ) +
-      facet_wrap(~ Marker) + 
-      labs(
-        title = paste("Concentration Response for", chem, "-", marker),
-        x = "Dose",
-        y = "Concentration (pg/mL)",
-        color = "Measurement Type",
-        shape = "Measurement Type",
-        linetype = "Sex"
-      ) +
-      theme_minimal() +
-      theme(
-        text = element_text(family = "Arial", size = 12),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "right",
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.line = element_line(color = "black")
-      ) +
-      scale_color_viridis(option = "plasma", discrete = TRUE) +
-      scale_linetype_manual(values = c("Male" = "dotted", "Female" = "solid"))  
-    if (nrow(significance_labels) > 0) {
-      p <- p + geom_text(
-        data = significance_labels,
-        aes(x = factor(group2, levels = unique(chem_marker_data$Dose)), y = y.position, label = significance),
-        inherit.aes = FALSE,
-        size = 6
-      )
-    }
-
-    print(p)  
   }
 }
 
@@ -197,6 +162,8 @@ for (chem in chemical_order) {
 }
 
 mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 2000
+mean_data <- mean_data %>%
+  mutate(Chemical = factor(Chemical, levels = chemical_order))
 
 replicate_data <- pha_data %>%
   mutate(
@@ -269,7 +236,7 @@ plot <- ggplot() +
              aes(yintercept = y, color = Chemical),  # map color here
              linetype = "dashed") +
   
-  facet_grid(Marker ~ Chemical, scales = "fixed") +
+  facet_grid(Marker ~ Chemical, scales = "fixed", drop = FALSE) +
  scale_color_manual(values = custom_colors) +  
   scale_fill_manual(values = custom_colors) +
   scale_shape_manual(values = c(Male = 21, Female = 24)) +
@@ -342,45 +309,6 @@ for (chem in unique_chemicals) {
       mutate(y.position = max_y + (row_number() - 1) * increment)
 
     significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
-
-    p <- ggplot(chem_marker_data, aes(x = Dose, y = delta, group = Replicate, color = Replicate)) +
-      geom_line(aes(linetype = Sex, group = Replicate), size = 1.2) +
-      geom_point(size = 3, alpha = 0.8) +
-      stat_summary(
-        aes(group = Dose),
-        fun = mean, geom = "point", shape = 95, size = 7, color = "black"  
-      ) +
-      facet_wrap(~ Marker) +  
-      labs(
-        title = paste("Concentration Response for", chem, "-", marker),
-        x = "Dose",
-        y = "Concentration (pg/mL)",
-        color = "Measurement Type",
-        shape = "Measurement Type",
-        linetype = "Sex"
-      ) +
-      theme_minimal() +
-      theme(
-        text = element_text(family = "Arial", size = 12),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "right",
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        axis.line = element_line(color = "black")
-      ) +
-      scale_color_viridis(option = "plasma", discrete = TRUE) +
-      scale_linetype_manual(values = c("Male" = "dotted", "Female" = "solid"))  
-
-    if (nrow(significance_labels) > 0) {
-      p <- p + geom_text(
-        data = significance_labels,
-        aes(x = factor(group2, levels = unique(chem_marker_data$Dose)), y = y.position, label = significance),
-        inherit.aes = FALSE,
-        size = 6
-      )
-    }
-
-    print(p)  
   }
 }
 
@@ -430,6 +358,8 @@ for (chem in chemical_order) {
 
 
 mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 1000
+mean_data <- mean_data %>%
+  mutate(Chemical = factor(Chemical, levels = chemical_order))
 
 replicate_data <- lps_data %>%
   mutate(
