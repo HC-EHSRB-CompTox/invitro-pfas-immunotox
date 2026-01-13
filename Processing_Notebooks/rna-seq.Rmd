@@ -164,14 +164,13 @@ head(deg_common)
 
 #PCA
 ```{r}
-# --- Step 1: Metadata ---
 metadata <- data.frame(
   sample = colnames(counts),
   condition = sub("_.*", "", colnames(counts)),
   sex = sub(".*_", "", colnames(counts))
 )
 
-# Remove first row if needed
+
 metadata <- metadata[-1, ]
 rownames(metadata) <- metadata$sample
 
