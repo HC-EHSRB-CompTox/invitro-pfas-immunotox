@@ -1,5 +1,4 @@
 
-
 #Load data
 ```{r}
 library(ggplot2)
