@@ -1,3 +1,6 @@
+---
+output: github_document
+---
 #  Ex Vivo Human Model for Assessing Immunotoxicity of Per- and Polyfluoroalkyl Substances (PFAS)
 ## Authors
 Allison Loan, Lauren M. Bradford, Andrée Nunnikhoven, Gong Zhang, Emily Dupuis, Eunnara Cho, Matthew J. Meier, Rocio Aranda-Rodriguez,  Azam Tayabali, Kristin M. Eccles, David Prescott
