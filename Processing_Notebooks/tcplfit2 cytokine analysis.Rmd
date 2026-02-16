@@ -39,6 +39,8 @@ data_elisa <- data_elisa %>%
   ) %>%
   dplyr::select(Conc, Marker, Sample., Sex, group, Chemical, Dose)
 
+
+
 # Pivot to long format — this allows per-marker NA filtering
 invitro <- data_elisa %>%
   mutate(Dose = ifelse(Dose == "Vehicle", 0, as.numeric(Dose))) %>%
@@ -52,7 +54,6 @@ invitro <- data_elisa %>%
 invitro <- invitro %>%
   mutate(Conc = as.numeric(as.character(Conc))) %>%
   filter(!is.na(Conc))
-cat("Final rows for tcplfit2 input:", nrow(invitro), "\n")
 ```
 
 ## tcplfit2
