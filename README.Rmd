@@ -10,8 +10,6 @@ Immunotoxicity has emerged as a key health concern for per- and polyfluoroalkyl 
 
 ## Graphical Abstract
 ![](Graphical abstract.png)
-
-
 ## Processing Notebooks
 All data processing, cleaning, and preprocessing notebooks are located in the Processing_Notebooks folder
 

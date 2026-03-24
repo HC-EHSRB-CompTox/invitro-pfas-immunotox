@@ -71,7 +71,7 @@ hline_data <- data %>%
   mutate(y = 0)      
 hline_data <- hline_data %>%
   mutate(Chemical = factor(Chemical, levels = chemical_order))
-
+write.csv(data, "../Mendeley/Figure_3.csv")
 ```
 
 #PHA

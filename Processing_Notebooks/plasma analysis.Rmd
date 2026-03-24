@@ -185,6 +185,7 @@ data_Plasma <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invit
 data_Plasma <- subset(data_Plasma, select = -X)
 data_Plasma <- data_Plasma[-c(9:24), ]
 
+
 rownames(data_Plasma) <- data_Plasma$X
 
 data_Plasma[data_Plasma == "<MDL"] <- NA
@@ -280,4 +281,6 @@ dev.off()
 filtered_data %>%
   group_by(Compound) %>%
   summarise(mean_uM = mean(uM, na.rm = TRUE))
+
+write.csv(filtered_data, "../Mendeley/Figure_1.csv")
 ```

@@ -37,8 +37,11 @@ vivo data.
 
 ## Graphical Abstract
 
-![](Graphical%20abstract.png) \## Processing Notebooks All data
-processing, cleaning, and preprocessing notebooks are located in the
-Processing_Notebooks folder
+![](Graphical%20abstract.png)
+
+## Processing Notebooks
+
+All data processing, cleaning, and preprocessing notebooks are located
+in the Processing_Notebooks folder
 
 ## Paper

@@ -224,6 +224,9 @@ pha_datasets <- lapply(pha_datasets, calculate_delta, vehicle_name = "PHA + Vehi
 lps_datasets<- lapply(lps_datasets, calculate_delta, vehicle_name = "LPS + Vehicle")
 
 datasets <- c(pha_datasets, lps_datasets)
+combined_df <- bind_rows(datasets, .id = "source")
+
+write.csv(combined_df, "../Mendeley/Figure_2.csv", row.names = FALSE)
 ```
 
 #PHA
