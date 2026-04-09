@@ -15,11 +15,13 @@ library(purrr)
 library(car)
 library(plotrix)
 library(extrafont)
+library(lme4)
 
 output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/ELISA (PBMCs)/plots_output/"
 dir.create(output_dir, showWarnings = FALSE)
 custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
-
+chemical_order <- c("PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
+windowsFonts(Arial = windowsFont("Arial"))
 ```
 
 #Load data
@@ -71,7 +73,7 @@ hline_data <- data %>%
   mutate(y = 0)      
 hline_data <- hline_data %>%
   mutate(Chemical = factor(Chemical, levels = chemical_order))
-write.csv(data, "../Mendeley/Figure_3.csv")
+
 ```
 
 #PHA
@@ -89,36 +91,62 @@ pha_data <- pha_data %>%
 unique_chemicals <- unique(pha_data$Chemical)
 unique_markers <- unique(pha_data$Marker)
 
+#remove uneqaul groups (for stats only)
+expected_doses <- unique(pha_data$Dose)
+
+pha_data_filtered <- pha_data %>%
+  group_by(Chemical, Marker, Replicate) %>%
+  filter(all(expected_doses %in% Dose)) %>%
+  ungroup()
+
+#################
+
 for (chem in unique_chemicals) {
   for (marker in unique_markers) {
-    chem_marker_data <- pha_data %>% filter(Chemical == chem, Marker == marker)
-    if (nrow(chem_marker_data) == 0) next  # Skip if no data for this combination
-    anova_model <- aov(delta ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
-    tukey_results <- emmeans(anova_model, pairwise ~ Dose)
     
-    pairwise_results <- as.data.frame(tukey_results$contrasts)
-    pairwise_results <- pairwise_results %>%
-      mutate(
-        significance = case_when(
-          p.value < 0.001 ~ "***",
-          p.value < 0.01 ~ "**",
-          p.value < 0.05 ~ "*",
-          p.value >= 0.05 & p.value < 0.099 ~ "."
+    chem_marker_data <- pha_data_filtered %>% #HERE 
+      filter(Chemical == chem, Marker == marker)
+    
+    if (nrow(chem_marker_data) == 0) next  
+    
+    # Run ANOVA
+    anova_model <- aov(Conc ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
+    
+    # Extract p-value for Dose effect
+    anova_summary <- summary(anova_model)
+    
+    # This accesses the Dose p-value inside the Error term
+    p_value <- anova_summary[["Error: Replicate:Dose"]][[1]]["Dose", "Pr(>F)"]
+    
+    # Only run post hoc if ANOVA is significant
+    if (!is.na(p_value) && p_value < 0.05) {
+      
+      tukey_results <- emmeans(anova_model, pairwise ~ Dose)
+      
+      pairwise_results <- as.data.frame(tukey_results$contrasts) %>%
+        mutate(
+          significance = case_when(
+            p.value < 0.001 ~ "***",
+            p.value < 0.01 ~ "**",
+            p.value < 0.05 ~ "*",
+            p.value >= 0.05 & p.value < 0.099 ~ "."
+          )
+        ) %>%
+        separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+        mutate(
+          group1 = str_replace_all(group1, "[()]", ""),
+          group2 = str_replace_all(group2, "[()]", "")
         )
-      ) %>%
-      separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
-      mutate(
-        group1 = str_replace_all(group1, "[()]", ""),
-        group2 = str_replace_all(group2, "[()]", "")
-      )
-    max_y <- max(chem_marker_data$delta, na.rm = TRUE)
-    increment <- max_y * 0.05 
+      
+      max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+      increment <- max_y * 0.05 
 
-    significance_labels <- pairwise_results %>%
-      filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
-      mutate(y.position = max_y + (row_number() - 1) * increment)
+      significance_labels <- pairwise_results %>%
+        filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+        mutate(y.position = max_y + (row_number() - 1) * increment)
 
-    significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+      significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+    }
   }
 }
 
@@ -257,10 +285,164 @@ strip.text.y.right = element_blank(),
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 6,
             check_overlap = FALSE)
-saveRDS(plot, file = "../pmplot/R/myexample.rds")
+
 print(plot)
 dev.off()
 ```
+##PHA LMM
+```{r}
+
+significance_results <- list()
+
+
+pha_data <- pha_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+unique_chemicals <- unique(pha_data$Chemical)
+unique_markers <- unique(pha_data$Marker)
+  for (chem in unique_chemicals) {
+  for (marker in unique_markers) {
+  
+chem_marker_data <- pha_data %>% 
+      filter(Chemical == chem, Marker == marker)
+        
+ lmm_model <- lmer(Conc ~ Dose + (1 | Replicate), data = chem_marker_data) # ANOVA for fixed effects 
+ anova_summary <-car::Anova(lmm_model, type = 3) 
+ cat("\n\n=== LMM ANOVA results for chem:", chem) 
+ print(anova_summary) 
+ 
+ # Only do pairwise comparisons if Dose effect is significant 
+treatment_p <- anova_summary["Dose", "Pr(>Chisq)"] 
+if (is.na(treatment_p) || treatment_p >= 0.05) next
+tukey_results <- emmeans(lmm_model, pairwise ~ Dose)
+    pairwise_results <- as.data.frame(tukey_results$contrast) %>% 
+        mutate(
+          significance = case_when(
+            p.value < 0.001 ~ "***",
+            p.value < 0.01  ~ "**",
+            p.value < 0.05  ~ "*",
+            p.value >= 0.05 & p.value < 0.099 ~ "."
+          )
+        ) %>%
+        separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+        mutate(
+          group1 = str_replace_all(group1, "[()]", ""),
+          group2 = str_replace_all(group2, "[()]", "")
+        )
+      
+      max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+      increment <- max_y * 0.05 
+
+      significance_labels <- pairwise_results %>%
+        filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+        mutate(y.position = max_y + (row_number() - 1) * increment)
+
+      significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+    }
+  }
+
+print(significance_results)
+chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
+
+pha_data <- pha_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+pha_data$Chemical <- factor(pha_data$Chemical, levels = chemical_order)
+
+mean_data <- pha_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(delta, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(delta) * 2.365,  # 95% CI
+    .groups = "drop"
+  )
+
+mean_data$Group <- "PHA"
+
+y_axis_limits <- c(-1500, 10000)
+
+
+for (chem in chemical_order) {
+  for (marker in unique(pha_data$Marker)) {
+    key <- paste(chem, marker, sep = "_")  
+
+    if (!is.null(significance_results[[key]])) {
+      mean_data$significance[mean_data$Chemical == chem & mean_data$Marker == marker] <- 
+        significance_results[[key]]$significance[match(
+          mean_data$Dose[mean_data$Chemical == chem & mean_data$Marker == marker], 
+          significance_results[[key]]$group2
+        )]
+    }
+  }
+}
+
+mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 2000
+mean_data <- mean_data %>%
+  mutate(Chemical = factor(Chemical, levels = chemical_order))
+
+replicate_data <- pha_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  # infer sex from Group prefix
+  )
+
+
+plot_file <- paste0(output_dir, "PHA_sig_LMM.png")
+png(plot_file, width = 3750, height = 2100, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+   geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed", drop = FALSE) +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+  
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
+  theme_minimal() +
+  theme(
+   text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+    guides(color = "none", fill = "none") +
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 6,
+            check_overlap = FALSE)
+
+print(plot)
+dev.off()
+```
+
 
 #LPS
 ```{r}
@@ -273,45 +455,68 @@ lps_data <- lps_data %>%
     log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)  
   )
 
+#remove uneqaul groups (for stats only)
+expected_doses <- unique(lps_data$Dose)
+
+lps_data_filtered <- lps_data %>%
+  group_by(Chemical, Marker, Replicate) %>%
+  filter(all(expected_doses %in% Dose)) %>%
+  ungroup()
+
+#################
+
 unique_chemicals <- unique(lps_data$Chemical)
 unique_markers <- unique(lps_data$Marker)
 
+
 for (chem in unique_chemicals) {
   for (marker in unique_markers) {
-    chem_marker_data <- lps_data %>% filter(Chemical == chem, Marker == marker)
-
-    if (nrow(chem_marker_data) == 0) next 
-
-    anova_model <- aov(delta ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
-    tukey_results <- emmeans(anova_model, pairwise ~ Dose)
     
-    pairwise_results <- as.data.frame(tukey_results$contrasts)
-
-    pairwise_results <- pairwise_results %>%
-      mutate(
-        significance = case_when(
-          p.value < 0.001 ~ "***",
-          p.value < 0.01 ~ "**",
-          p.value < 0.05 ~ "*",
+    chem_marker_data <- lps_data_filtered %>% 
+      filter(Chemical == chem, Marker == marker)
+    
+    if (nrow(chem_marker_data) == 0) next  
+    
+    # Run ANOVA
+    anova_model <- aov(Conc ~ Dose + Error(Replicate/Dose), data = chem_marker_data)
+    
+    # Extract p-value for Dose effect
+    anova_summary <- summary(anova_model)
+    
+    # This accesses the Dose p-value inside the Error term
+    p_value <- anova_summary[["Error: Replicate:Dose"]][[1]]["Dose", "Pr(>F)"]
+    
+    # Only run post hoc if ANOVA is significant
+    if (!is.na(p_value) && p_value < 0.05) {
+      
+      tukey_results <- emmeans(anova_model, pairwise ~ Dose)
+      
+      pairwise_results <- as.data.frame(tukey_results$contrasts) %>%
+        mutate(
+          significance = case_when(
+            p.value < 0.001 ~ "***",
+            p.value < 0.01 ~ "**",
+            p.value < 0.05 ~ "*",
+            p.value >= 0.05 & p.value < 0.099 ~ "."
+          )
+        ) %>%
+        separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+        mutate(
+          group1 = str_replace_all(group1, "[()]", ""),
+          group2 = str_replace_all(group2, "[()]", "")
         )
-      ) %>%
-      separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
-      mutate(
-        group1 = str_replace_all(group1, "[()]", ""),
-        group2 = str_replace_all(group2, "[()]", "")
-      )
+      
+      max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+      increment <- max_y * 0.05 
 
-    max_y <- max(chem_marker_data$delta, na.rm = TRUE)
-    increment <- max_y * 0.05 
+      significance_labels <- pairwise_results %>%
+        filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+        mutate(y.position = max_y + (row_number() - 1) * increment)
 
-    significance_labels <- pairwise_results %>%
-      filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
-      mutate(y.position = max_y + (row_number() - 1) * increment)
-
-    significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+      significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+    }
   }
 }
-
 print(significance_results)
 chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
 
@@ -337,10 +542,6 @@ mean_data <- lps_data %>%
   mean_data$Group <- "LPS"
 
 y_axis_limits <- c(-100, max(lps_data$delta, na.rm = TRUE) * 1.2)
-
-
-plot_file <- paste0(output_dir, "lps_updated_combined.png")
-png(plot_file, width = 3000, height = 1000, res = 300)
 
 for (chem in chemical_order) {
   for (marker in unique(lps_data$Marker)) {
@@ -454,7 +655,163 @@ strip.text.y.right = element_blank(),
             aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
             size = 6,
             check_overlap = FALSE)
-saveRDS(plot, file = "../pmplot/R/myexample2.rds")
+
+print(plot)
+dev.off()
+```
+
+##LPS LMM
+```{r}
+
+significance_results <- list()
+
+
+lps_data <- lps_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+unique_chemicals <- unique(lps_data$Chemical)
+unique_markers <- unique(lps_data$Marker)
+  for (chem in unique_chemicals) {
+  for (marker in unique_markers) {
+  
+chem_marker_data <- lps_data %>% 
+      filter(Chemical == chem, Marker == marker)
+        
+ lmm_model <- lmer(Conc ~ Dose + (1 | Replicate), data = chem_marker_data) # ANOVA for fixed effects 
+ anova_summary <-car::Anova(lmm_model, type = 3) 
+ cat("\n\n=== LMM ANOVA results for chem:", chem) 
+ print(anova_summary) 
+ 
+ # Only do pairwise comparisons if Dose effect is significant 
+treatment_p <- anova_summary["Dose", "Pr(>Chisq)"] 
+if (is.na(treatment_p) || treatment_p >= 0.05) next
+tukey_results <- emmeans(lmm_model, pairwise ~ Dose)
+    pairwise_results <- as.data.frame(tukey_results$contrast) %>% 
+        mutate(
+          significance = case_when(
+            p.value < 0.001 ~ "***",
+            p.value < 0.01  ~ "**",
+            p.value < 0.05  ~ "*",
+            p.value >= 0.05 & p.value < 0.099 ~ "."
+          )
+        ) %>%
+        separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+        mutate(
+          group1 = str_replace_all(group1, "[()]", ""),
+          group2 = str_replace_all(group2, "[()]", "")
+        )
+      
+      max_y <- max(chem_marker_data$Conc, na.rm = TRUE)
+      increment <- max_y * 0.05 
+
+      significance_labels <- pairwise_results %>%
+        filter(group1 == "Vehicle" | group2 == "Vehicle") %>%
+        mutate(y.position = max_y + (row_number() - 1) * increment)
+
+      significance_results[[paste(chem, marker, sep = "_")]] <- significance_labels  
+    }
+  }
+
+print(significance_results)
+
+chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
+
+lps_data <- lps_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)  
+  )
+
+
+lps_data$Chemical <- factor(lps_data$Chemical, levels = chemical_order)
+
+
+mean_data <- lps_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(delta, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(delta) * 2.365, 
+    .groups = "drop"
+  )
+
+  mean_data$Group <- "LPS"
+
+y_axis_limits <- c(-100, max(lps_data$delta, na.rm = TRUE) * 1.2)
+
+for (chem in chemical_order) {
+  for (marker in unique(lps_data$Marker)) {
+    key <- paste(chem, marker, sep = "_") 
+
+    if (!is.null(significance_results[[key]])) {
+      mean_data$significance[mean_data$Chemical == chem & mean_data$Marker == marker] <- 
+        significance_results[[key]]$significance[match(
+          mean_data$Dose[mean_data$Chemical == chem & mean_data$Marker == marker], 
+          significance_results[[key]]$group2
+        )]
+    }
+  }
+}
+
+
+mean_data$y_position_label <- mean_data$mean_stat + mean_data$se_stat + 1000
+mean_data <- mean_data %>%
+  mutate(Chemical = factor(Chemical, levels = chemical_order))
+
+replicate_data <- lps_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  
+  )
+
+plot_file <- paste0(output_dir, "LPS_sig_LMM.png")
+png(plot_file, width = 3750, height = 1000, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = delta, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+   geom_hline(data = hline_data,
+             aes(yintercept = y, color = Chemical),  # map color here
+             linetype = "dashed") +
+  
+  facet_grid(Marker ~ Chemical, scales = "fixed") +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+  
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
+  theme_minimal() +
+  theme(
+   text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  ) +
+    guides(color = "none", fill = "none") +
+  geom_text(data = mean_data[!is.na(mean_data$significance), ],
+            aes(x = log_Treatment, y = y_position_label, label = significance, color = Chemical),
+            size = 6,
+            check_overlap = FALSE)
+
 print(plot)
 dev.off()
 ```
@@ -487,74 +844,162 @@ perform_anova(pha_data, "PHA")
 ```
 
 ##Normal and vairance testing
+###PHA
 ```{r}
-combo_split <- split(pha_data, list(pha_data$Marker, pha_data$Chemical), drop = TRUE)
+pha_split <- split(pha_data, list(pha_data$Marker, pha_data$Chemical), drop = TRUE)
 
+# Lists to store results
 levene_results <- list()
 shapiro_results <- list()
 
-for (combo_name in names(combo_split)) {
-  df <- combo_split[[combo_name]]
+
+for (combo_name in names(pha_split)) {
+  df <- pha_split[[combo_name]]
   
   cat("\n==========", combo_name, "==========\n")
   
-  # Levene's Test
+
+  # Levene's Test across doses
   if (length(unique(df$Dose)) > 1) {
-    cat("Levene's Test:\n")
-    lev_result <- car::leveneTest(delta ~ Dose, data = df)
-    print(lev_result)
-    levene_results[[combo_name]] <- lev_result
+    lev_result <- car::leveneTest(Conc ~ Dose, data = df)
+    lev_p <- lev_result[1, "Pr(>F)"]
+    cat("Levene's Test p-value:", lev_p, "\n")
+    levene_results[[combo_name]] <- list(result = lev_result, p_value = lev_p)
   } else {
     cat("Levene's Test: Not enough dose groups\n")
     levene_results[[combo_name]] <- NA
   }
   
-  # Shapiro-Wilk Test
-  if (nrow(df) >= 3 && length(unique(df$delta)) > 2) {
-    cat("\nShapiro-Wilk Test:\n")
-    shapiro_result <- shapiro.test(df$delta)
+
+  # Shapiro-Wilk Test 
+
+  if (nrow(df) >= 3 && length(unique(df$Conc)) > 2) {
+    shapiro_result <- shapiro.test(df$Conc)
     print(shapiro_result)
-    shapiro_results[[combo_name]] <- shapiro_result
+    cat("Shapiro-Wilk p-value:", shapiro_result$p.value, "\n")
+    shapiro_results[[combo_name]] <- list(result = shapiro_result, p_value = shapiro_result$p.value)
   } else {
-    cat("\nShapiro-Wilk Test: Not enough data\n")
+    cat("Shapiro-Wilk Test: Not enough data\n")
     shapiro_results[[combo_name]] <- NA
   }
+  
+
+  # Boxplot for variance inspection
+  p_box <- ggplot(df, aes(x = factor(Dose), y = Conc, color = factor(Dose))) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.5) +
+    geom_jitter(width = 0.2, alpha = 0.7) +
+    labs(title = paste("Variance inspection:", combo_name),
+         y = "Conc",
+         x = "Dose") +
+    theme_minimal() +
+    theme(legend.position = "none")
+  print(p_box)
 }
 
-############################################################################################################
 
-combo_split <- split(lps_data, list(lps_data$Marker, lps_data$Chemical), drop = TRUE)
-
-levene_results <- list()
-shapiro_results <- list()
-
-for (combo_name in names(combo_split)) {
-  df <- combo_split[[combo_name]]
+# Build list of plots
+# remove count objects
+hist_plots <- lapply(names(pha_split), function(combo_name) {
+  df <- pha_split[[combo_name]]
+  bw <- diff(range(df$Conc, na.rm = TRUE)) / nclass.Sturges(df$Conc)
   
-  cat("\n==========", combo_name, "==========\n")
-  
-  # Levene's Test
-  if (length(unique(df$Dose)) > 1) {
-    cat("Levene's Test:\n")
-    lev_result <- car::leveneTest(delta ~ Dose, data = df)
-    print(lev_result)
-    levene_results[[combo_name]] <- lev_result
-  } else {
-    cat("Levene's Test: Not enough dose groups\n")
-    levene_results[[combo_name]] <- NA
-  }
-  
-  # Shapiro-Wilk Test
-  if (nrow(df) >= 3 && length(unique(df$delta)) > 2) {
-    cat("\nShapiro-Wilk Test:\n")
-    shapiro_result <- shapiro.test(df$delta)
-    print(shapiro_result)
-    shapiro_results[[combo_name]] <- shapiro_result
-  } else {
-    cat("\nShapiro-Wilk Test: Not enough data\n")
-    shapiro_results[[combo_name]] <- NA
-  }
-}
+  ggplot(df, aes(x = Conc)) +
+    geom_histogram(binwidth = bw, fill = "#330597", color = "white", aes(y = after_stat(density))) +
+    geom_density(color = "firebrick", linewidth = 0.8) +
+    labs(title = combo_name, x = NULL, y = NULL) +
+      theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.line = element_line(color = "black"), 
+    axis.ticks = element_line(color = "black"),
+    panel.grid = element_blank()
+  ) 
+})
+names(hist_plots) <- names(pha_split) 
+names(pha_split)
+chemical_order <- c("IFN-y.PFOS", "IFN-y.PFOA","IFN-y.PFNA", "IFN-y.PFDA", "IFN-y.PFHxS", "IFN-y.GenX","IL-2.PFOS", "IL-2.PFOA","IL-2.PFNA", "IL-2.PFDA", "IL-2.PFHxS", "IL-2.GenX","TNF-a.PFOS", "TNF-a.PFOA","TNF-a.PFNA", "TNF-a.PFDA", "TNF-a.PFHxS", "TNF-a.GenX")
+hist_plots <- hist_plots[chemical_order]
+hist_plots <- wrap_plots(hist_plots, ncol = 6)
+print(hist_plots)
+ggsave("/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/ELISA (PBMCs)/plots_output/norm_pha.png", plot = hist_plots, width = 12, height = 12, dpi = 300)
 ```
+###LPS
+```{r}
+lps_split <- split(lps_data, list(lps_data$Marker, lps_data$Chemical), drop = TRUE)
+
+# Lists to store results
+levene_results <- list()
+shapiro_results <- list()
 
 
+for (combo_name in names(lps_split)) {
+  df <- lps_split[[combo_name]]
+  
+  cat("\n==========", combo_name, "==========\n")
+  
+
+  # Levene's Test across doses
+  if (length(unique(df$Dose)) > 1) {
+    lev_result <- car::leveneTest(Conc ~ Dose, data = df)
+    lev_p <- lev_result[1, "Pr(>F)"]
+    cat("Levene's Test p-value:", lev_p, "\n")
+    levene_results[[combo_name]] <- list(result = lev_result, p_value = lev_p)
+  } else {
+    cat("Levene's Test: Not enough dose groups\n")
+    levene_results[[combo_name]] <- NA
+  }
+  
+
+  # Shapiro-Wilk Test 
+
+  if (nrow(df) >= 3 && length(unique(df$Conc)) > 2) {
+    shapiro_result <- shapiro.test(df$Conc)
+    print(shapiro_result)
+    cat("Shapiro-Wilk p-value:", shapiro_result$p.value, "\n")
+    shapiro_results[[combo_name]] <- list(result = shapiro_result, p_value = shapiro_result$p.value)
+  } else {
+    cat("Shapiro-Wilk Test: Not enough data\n")
+    shapiro_results[[combo_name]] <- NA
+  }
+  
+
+  # Boxplot for variance inspection
+  p_box <- ggplot(df, aes(x = factor(Dose), y = Conc, color = factor(Dose))) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.5) +
+    geom_jitter(width = 0.2, alpha = 0.7) +
+    labs(title = paste("Variance inspection:", combo_name),
+         y = "Conc",
+         x = "Dose") +
+    theme_minimal() +
+    theme(legend.position = "none")
+  print(p_box)
+}
+
+
+# Build list of plots
+# remove count objects
+hist_plots <- lapply(names(lps_split), function(combo_name) {
+  df <- lps_split[[combo_name]]
+  bw <- diff(range(df$Conc, na.rm = TRUE)) / nclass.Sturges(df$Conc)
+  
+  ggplot(df, aes(x = Conc)) +
+    geom_histogram(binwidth = bw, fill = "#330597", color = "white", aes(y = after_stat(density))) +
+    geom_density(color = "firebrick", linewidth = 0.8) +
+    labs(title = combo_name, x = NULL, y = NULL) +
+      theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 12),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.line = element_line(color = "black"), 
+    axis.ticks = element_line(color = "black"),
+    panel.grid = element_blank()
+  ) 
+})
+names(hist_plots) <- names(lps_split) 
+chemical_order <- c("TNF-a.PFOS", "TNF-a.PFOA","TNF-a.PFNA", "TNF-a.PFDA", "TNF-a.PFHxS", "TNF-a.GenX")
+hist_plots <- hist_plots[chemical_order]
+hist_plots <- wrap_plots(hist_plots, ncol = 6)
+print(hist_plots)
+ggsave("/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/ELISA (PBMCs)/plots_output/norm_lps.png", plot = hist_plots, width = 12, height = 4, dpi = 300)
+```
