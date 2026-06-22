@@ -1,0 +1,128 @@
+```{r}
+library(httk)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+# ---------------------------------------------------------------
+# Compare free fraction (eta_free) and partitioning across a
+# range of FBS concentrations, for each PFAS chemical.
+# This directly addresses the reviewer comment about whether/how
+# serum supplementation (10% FBS) affects PFAS bioavailability,
+# by showing the predicted free fraction at 0%, 1%, and 10% FBS.
+# ---------------------------------------------------------------
+
+chemicals <- tibble::tibble(
+  Chemical = c("PFHxS", "PFNA", "PFOA", "PFOS", "PFDA", "Genx"),
+  cas      = c("355-46-4", "375-95-1", "335-67-1", "1763-23-1", "335-76-2", "62037-80-3")
+)
+
+# FBS fractions to compare: 0%, 1%, 10%
+fbs_levels <- c(0, 0.01, 0.05, 0.1)
+
+extract_cfree <- function(obj, chem, fbs) {
+  obj %>%
+    mutate(
+      Chemical = chem,
+      FBSf     = fbs
+    ) %>%
+    select(Chemical, FBSf, eta_free, xplastic, xbsa, xair, xdom, xslip, xcells, xprecip)
+}
+
+# Run armitage_eval for every chemical x FBS level combination
+results_list <- list()
+
+for (i in seq_len(nrow(chemicals))) {
+  for (fbs in fbs_levels) {
+
+    res <- armitage_eval(
+      chem.cas       = chemicals$cas[i],
+      this.well_number = 96,
+      this.FBSf      = fbs,
+      this.v_total   = 200,
+      this.cell_yield = 200000,
+      nomconc.vector = 100,
+      this.Tsys      = 37,
+      this.cell_pH   = 7.4
+    )
+
+    results_list[[paste(chemicals$Chemical[i], fbs, sep = "_")]] <-
+      extract_cfree(res, chemicals$Chemical[i], fbs)
+  }
+}
+
+cfree_df <- bind_rows(results_list)
+
+# Make FBS level a readable factor for plotting
+cfree_df <- cfree_df %>%
+  mutate(
+    FBS_label = factor(
+      paste0(FBSf * 100, "% FBS"),
+      levels = paste0(sort(unique(fbs_levels)) * 100, "% FBS")
+    )
+  )
+
+# ---------------------------------------------------------------
+# Plot 1: Free fraction (eta_free) vs FBS concentration,
+# one line/point per chemical -- the key figure for the rebuttal
+# ---------------------------------------------------------------
+p_free <- ggplot(cfree_df,
+                  aes(x = FBS_label, y = eta_free,
+                      color = Chemical, group = Chemical)) +
+  geom_point(size = 3) +
+  geom_line(linewidth = 1) +
+  labs(
+    x = "Serum (FBS) concentration",
+    y = "Free fraction (eta_free)",
+    color = "Chemical",
+    title = "Predicted free fraction of PFAS across FBS concentrations"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 16),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black")
+  )
+
+print(p_free)
+
+ggsave("pfas_free_fraction_vs_FBS.png", p_free, width = 8, height = 6, dpi = 300)
+
+# ---------------------------------------------------------------
+# Plot 2: Stacked partitioning (all phases) faceted by FBS level
+# -- shows where the "lost" free fraction goes (e.g., into xbsa)
+# as FBS increases, which is the mechanistic explanation for
+# the reviewer comment about lipid/protein binding
+# ---------------------------------------------------------------
+cfree_long <- cfree_df %>%
+  pivot_longer(
+    cols = c(xplastic, xbsa, xslip, xcells, eta_free),
+    names_to = "Phase",
+    values_to = "Fraction"
+  )
+
+p_stack <- ggplot(cfree_long,
+                   aes(x = Chemical, y = Fraction, fill = Phase)) +
+  geom_col(position = "stack") +
+  facet_wrap(~ FBS_label, nrow = 1) +
+  scale_fill_viridis_d(option = "plasma") +
+  labs(
+    y = "Fraction in each phase",
+    x = "Chemical",
+    fill = "Phase",
+    title = "PFAS partitioning across in vitro compartments at varying FBS levels"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black")
+  )
+
+print(p_stack)
+
+ggsave("pfas_partitioning_by_FBS.png", p_stack, width = 11, height = 6, dpi = 300)
+
+```
+

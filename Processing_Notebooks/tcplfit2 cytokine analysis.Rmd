@@ -521,28 +521,34 @@ dose_ranges <- bind_rows(invitro2, invivo2) %>%
     .groups = "drop"
   )
 
-# Apply filters
 combined_bmd_filtered <- combined_bmd %>%
   left_join(dose_ranges, by = c("Chemical", "Source")) %>%
   mutate(
-    # Filter 1: Remove BMDs outside concentration range
-    BMD = ifelse(BMD < minDose | BMD > maxDose, NA, BMD),
-    BMDL = ifelse(BMD < minDose | BMD > maxDose, NA, BMDL),
-    BMDU = ifelse(BMD < minDose | BMD > maxDose, NA, BMDU),
 
-    # Filter 2: Remove BMD if hit < 0.5
-    BMD = ifelse(hit < 0.9, NA, BMD),
-    BMDL = ifelse(hit < 0.9, NA, BMDL),
-    BMDU = ifelse(hit < 0.9, NA, BMDU),
+    # Apply quality filters first
+    filter_reason = case_when(
+      hit < 0.9 ~ "low hit call",
+      is.na(BMDL) ~ "missing BMDL",
+      (BMDU / BMDL) >= 50 ~ "high BMDU/BMDL ratio",
+      BMD < minDose | BMD > maxDose ~ "outside dose range",
+      TRUE ~ NA_character_
+    ),
 
-    # Filter 3: Remove BMD if no lower BMD limit
-    BMD = ifelse(is.na(BMDL), NA, BMD),
-    BMDU = ifelse(is.na(BMDL), NA, BMDU),
-    
-    
-    BMD = ifelse(BMDU / BMDL >= 50, NA, BMD),
-    BMDL = ifelse(BMDU / BMDL >= 50, NA, BMDL),
-    BMDU = ifelse(BMDU / BMDL >= 50, NA, BMDU)
+    # Only keep BMDs if:
+    #  - no filter reason
+    #  - OR only issue is outside dose range
+    BMD = ifelse(
+      is.na(filter_reason) | filter_reason == "outside dose range",
+      BMD, NA
+    ),
+    BMDL = ifelse(
+      is.na(filter_reason) | filter_reason == "outside dose range",
+      BMDL, NA
+    ),
+    BMDU = ifelse(
+      is.na(filter_reason) | filter_reason == "outside dose range",
+      BMDU, NA
+    )
   )
 
 # Plot
@@ -568,13 +574,22 @@ p <- ggplot(combined_bmd_filtered, aes(x = BMD, y = Marker, color = Source)) +
   theme(legend.position = "bottom")
 
 print(p)
-ggsave("BMD_Comparison_DotWhisker_filtered.png", p, width = 10, height = 6)
+ggsave("/plots/BMD_Comparison_DotWhisker_filtered.png", p, width = 10, height = 6)
 # Filter for PFOS and TNF.a
 filtered_data <- combined_bmd_filtered %>%
   filter(Chemical == "PFOS", Marker == "TNF.a")
 
+
+combined_bmd_filtered <- combined_bmd_filtered %>%
+  left_join(dose_ranges, by = c("Chemical", "Source")) %>%
+  mutate(
+    # APPLY FILTERING 
+    BMD = ifelse(is.na(filter_reason), BMD, NA),
+    BMDL = ifelse(is.na(filter_reason), BMDL, NA),
+    BMDU = ifelse(is.na(filter_reason), BMDU, NA)
+  )
 # Then plot
-p <- ggplot(filtered_data, aes(x = BMD, y = Marker, color = Source)) +
+p <- ggplot(combined_bmd_filtered, aes(x = BMD, y = Marker, color = Source)) +
   geom_point(position = position_dodge(width = 0.7), size = 3) +
   geom_errorbarh(
     aes(
@@ -597,7 +612,7 @@ p <- ggplot(filtered_data, aes(x = BMD, y = Marker, color = Source)) +
 
 print(p)
 
-ggsave("BMD_Comparison_DotWhisker_filtered2.png", p, width = 8, height = 4)
+ggsave("/plots/BMD_Comparison_DotWhisker_filtered2.png", p, width = 8, height = 4)
 ```
 ##DRC
 ```{r}
@@ -727,8 +742,8 @@ p_invivo <- make_plots("In Vivo", raw_combined, models_combined, bmd_points, x_b
 
 # To display side-by-side:
 p<- p_invitro + p_invivo + plot_annotation(title = "Dose-Response Plots In Vitro and In Vivo")
-
-ggsave("drc2.png", p, width = 8, height = 4)
+p
+ggsave("/plots/drc2.png", p, width = 8, height = 4)
 ```
 
 
