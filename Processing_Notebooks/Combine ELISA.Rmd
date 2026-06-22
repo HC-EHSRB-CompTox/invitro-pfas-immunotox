@@ -76,17 +76,84 @@ hline_data <- hline_data %>%
 
 ```
 
+
 #PHA
+##PHA raw pg/ml for supplementary 
 ```{r}
-
-significance_results <- list()
-
 
 pha_data <- pha_data %>%
   mutate(
     Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
     log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
   )
+
+unique_chemicals <- unique(pha_data$Chemical)
+unique_markers <- unique(pha_data$Marker)
+
+pha_data$Chemical <- factor(pha_data$Chemical, levels = chemical_order)
+
+mean_data <- pha_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(Conc, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(Conc) * 2.365,  # 95% CI
+    .groups = "drop"
+  )
+
+mean_data$Group <- "PHA"
+
+replicate_data <- pha_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  # infer sex from Group prefix
+  )
+
+plot_file <- paste0(output_dir, "PHA_raw_elisa.png")
+png(plot_file, width = 3750, height = 2100, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  
+  facet_grid(Marker ~ Chemical,  drop = FALSE) +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+  
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
+  theme_minimal() +
+  theme(
+   text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  )
+
+print(plot)
+dev.off()
+```
+##ANOVA
+```{r}
+
+significance_results <- list()
+
 
 unique_chemicals <- unique(pha_data$Chemical)
 unique_markers <- unique(pha_data$Marker)
@@ -153,11 +220,6 @@ for (chem in unique_chemicals) {
 print(significance_results)
 chemical_order <- c("PFOS", "PFOA","PFNA", "PFDA", "PFHxS", "GenX")
 
-pha_data <- pha_data %>%
-  mutate(
-    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
-    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
-  )
 
 pha_data$Chemical <- factor(pha_data$Chemical, levels = chemical_order)
 
@@ -288,6 +350,9 @@ strip.text.y.right = element_blank(),
 
 print(plot)
 dev.off()
+
+
+
 ```
 ##PHA LMM
 ```{r}
@@ -443,8 +508,80 @@ print(plot)
 dev.off()
 ```
 
-
 #LPS
+##LPS raw pg/ml for supplementary 
+```{r}
+
+lps_data <- lps_data %>%
+  mutate(
+    Dose = factor(Dose, levels = c("Vehicle", "0.5", "12.5", "25", "50", "100")),
+    log_Treatment = log10(as.numeric(ifelse(Dose == "Vehicle", "0", as.character(Dose))) + 1)
+  )
+
+unique_chemicals <- unique(lps_data$Chemical)
+unique_markers <- unique(lps_data$Marker)
+
+lps_data$Chemical <- factor(lps_data$Chemical, levels = chemical_order)
+
+mean_data <- lps_data %>%
+  group_by(Chemical, Dose, Marker) %>%
+  summarise(
+    mean_stat = mean(Conc, na.rm = TRUE),  
+    log_Treatment = mean(log_Treatment, na.rm = TRUE),  
+    se_stat = std.error(Conc) * 2.365,  # 95% CI
+    .groups = "drop"
+  )
+
+mean_data$Group <- "LPS"
+
+replicate_data <- lps_data %>%
+  mutate(
+    Treatment = str_replace(Treatment, "^(LPS|PHA)[ ]?(\\+ )?", "") %>%
+                str_remove("uM") %>%
+                str_trim(),
+    Chemical = factor(Chemical, levels = chemical_order),
+    Sex = ifelse(str_starts(Replicate, "M"), "Male", "Female")  # infer sex from Group prefix
+  )
+
+plot_file <- paste0(output_dir, "LPS_raw_elisa.png")
+png(plot_file, width = 3750, height = 1000, res = 300)
+
+plot <- ggplot() +
+  geom_jitter(data = replicate_data,
+           aes(x = log_Treatment, y = Conc, fill = Chemical, color = Chemical, shape = Sex),
+           stroke = 0.8,
+           alpha =0.3,
+           size = 1.5) +
+  geom_point(data = mean_data,
+             aes(x = log_Treatment, y = mean_stat, color = Chemical),
+             size = 2) +
+  
+  geom_errorbar(data = mean_data,
+                aes(x = log_Treatment, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+                width = 0.1) +
+  
+  facet_grid(Marker ~ Chemical,  drop = FALSE) +
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+  
+  labs(x = "Log10 Concentration (µM)", y = "pg/mL", color = "Chemical", shape = NULL) +
+  theme_minimal() +
+  theme(
+   text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  )
+
+print(plot)
+dev.off()
+```
+
+##ANOVA
 ```{r}
 
 significance_results <- list()
