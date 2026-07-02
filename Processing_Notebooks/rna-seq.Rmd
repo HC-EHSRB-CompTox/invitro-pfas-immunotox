@@ -17,6 +17,8 @@ library(eulerr)
 library(edgeR)
 library(ggrepel)
 library(limma)
+
+windowsFonts(Arial = windowsFont("Arial"))
 deg_f <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Female_02-10-2025.12.04-DESeq_all.csv")
 deg_m <- read.csv("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/2.RNA-Seq_PBMCs_AL_ILM_Male_02-10-2025.12.04-DESeq_all.csv")
 ```
@@ -161,6 +163,77 @@ write.csv(deg_common, "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro
 # --- Optional: preview ---
 head(deg_common)
 ```
+#Revision
+```{r}
+# b cell indentiy markers 
+
+padj_thresh <- 0.05
+log2FC_thresh <- 0.5
+highlight_genes <- c(
+  "CD19","CD20", "CD21","CD22","CD23","CD24","CD27", "CD38", "IGHM")
+
+# Combine male + female — filtered to highlight genes only
+deg_combined <- bind_rows(
+  deg_f %>% mutate(Sex="Female"),
+  deg_m %>% mutate(Sex="Male")
+) %>%
+  filter(Gene_Symbol %in% highlight_genes) %>%     # <-- only keep labelled genes
+  mutate(Significant = case_when(
+    padj < padj_thresh & log2FoldChange > log2FC_thresh  ~ "Up",
+    padj < padj_thresh & log2FoldChange < -log2FC_thresh ~ "Down",
+    TRUE ~ "NS"
+  )) %>%
+  mutate(contrast_clean = str_replace_all(contrast, "_[FM](?=\\b)", "")) %>%
+  mutate(highlight = Gene_Symbol)   # all rows are highlight genes now
+
+deg_combined$contrast_clean <- factor(
+  deg_combined$contrast_clean,
+  levels = c("PFOS vs Control", "PFOA vs Control", "PFNA vs Control")
+)
+
+volcano<- ggplot(deg_combined, aes(x = log2FoldChange, y = -log10(padj),
+                          fill = Significant, shape = Sex)) +
+  geom_point(alpha = 0.6, size = 2, color = "black", stroke = 0.5) +
+  scale_fill_manual(values = c("Up" = "maroon", "Down" = "navy", "NS" = "grey")) +
+  scale_shape_manual(values = c("Female" = 21, "Male" = 24)) +
+  scale_color_manual(values = c("Up" = "maroon", "Down" = "navy", "NS" = "grey"),  # <-- add this
+                     guide = "none") +                                               # hide from legend
+  ggrepel::geom_text_repel(
+    aes(label = highlight, color = Significant),   # <-- add color = Significant here
+    size = 4,
+    max.overlaps = 25,
+    force = 10,
+    box.padding   = unit(0.75, "lines"),
+    point.padding = unit(0.75, "lines"),
+    min.segment.length = 2,
+    force_pull = 2,
+    show.legend = FALSE
+  ) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dotted", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "black") +
+  theme_minimal(base_size = 16) +
+  theme(text = element_text(family = "Arial", size = 16),
+        axis.text = element_text(angle = 45, hjust = 1),
+        legend.position = "bottom",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(color = "black")) +
+  labs(title = "Combined Male & Female Volcano Plots by Contrast",
+       x = "log2(Fold Change)",
+       y = "-log10(adjusted p-value)") +
+  facet_wrap(~contrast_clean, scales = "free") +
+  coord_cartesian(xlim = c(-4, 4), ylim = c(-5, 35))
+print(volcano)
+
+ggsave("C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/rna -seq/plots/_revisions_volcano.png",
+       plot = volcano, bg = "white", height = 5, width = 10)
+
+
+
+```
+
+
+
 
 #PCA
 ```{r}

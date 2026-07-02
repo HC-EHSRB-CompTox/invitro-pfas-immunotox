@@ -1,0 +1,184 @@
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotrix)
+df <- read.csv("/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/R input.csv")
+
+custom_colors <- c("black", "#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
+chemical_order <- c("DMSO","PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
+
+```
+
+```{r}
+#remove blank rows
+df <- df %>%
+  filter(!is.na(Human), Human != "")
+#add seex info
+df <- df %>%
+  mutate(
+    Sex = case_when(
+      startsWith(Human, "F") ~ "Female",
+      startsWith(Human, "M") ~ "Male",
+      TRUE ~ NA_character_
+    )
+  )
+
+df_rep <- df %>%
+  mutate(
+    Raw_rep1 = Raw_rep1,
+    Raw_rep2 = Raw_rep2,
+    Cells_rep1 = Cells_rep1,
+    Cells_rep2 = Cells_rep2
+  ) %>%
+  pivot_longer(
+    cols = c(Raw_rep1, Raw_rep2, Cells_rep1, Cells_rep2),
+    names_to = "Type",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Metric = ifelse(grepl("Raw", Type), "Raw", "Cells"),
+    Rep = ifelse(grepl("rep1", Type), "rep1", "rep2")
+  )
+
+df_human <- df_rep %>%
+  group_by(Human, Chemical, Treatment, Metric, Sex)%>%
+  summarise(
+    mean = mean(Value),
+    .groups = "drop"
+  )
+
+mean_data <- df_human %>%
+  group_by(Chemical, Treatment, Metric) %>%
+  summarise(
+    mean_stat = mean(mean),
+    se_stat = std.error(mean) * 2.365,  # 95% CI
+    .groups = "drop"
+  )
+```
+
+
+#Raw absorbance
+```{r}
+df_human$Chemical <- factor(df_human$Chemical, levels = chemical_order)
+
+plot_raw <- ggplot() +
+
+  geom_jitter(
+    data = df_human %>% filter(Metric == "Raw"),
+    aes(
+      x = Chemical,
+      y = mean,
+      color = Chemical,
+      fill = Chemical,
+      shape = Sex
+    ),
+    stroke = 0.8,
+    alpha = 0.3,
+    size = 1.5,
+    width = 0.15
+  ) +
+
+  geom_point(
+    data = mean_data %>% filter(Metric == "Raw"),
+    aes(x = Chemical, y = mean_stat, color = Chemical),
+    size = 2
+  ) +
+
+  geom_errorbar(
+    data = mean_data %>% filter(Metric == "Raw"),
+    aes(x = Chemical, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+    width = 0.1
+  ) +
+
+  facet_wrap(Treatment ~ .) +
+
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+
+  labs(x = "Chemical", y = "Raw signal") +
+
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "b",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  )
+
+plot_raw
+ggsave(
+  filename = "/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/viability_rawabs.png",
+  plot = plot_raw,
+  bg = "white",
+  width = 8,
+  height = 4,
+  dpi = 300
+)
+```
+
+
+#of cells per well
+```{r}
+plot_Cells <- ggplot() +
+
+  geom_jitter(
+    data = df_human %>% filter(Metric == "Cells"),
+    aes(
+      x = Chemical,
+      y = mean,
+      color = Chemical,
+      fill = Chemical,
+      shape = Sex
+    ),
+    stroke = 0.8,
+    alpha = 0.3,
+    size = 1.5,
+    width = 0.15
+  ) +
+
+  geom_point(
+    data = mean_data %>% filter(Metric == "Cells"),
+    aes(x = Chemical, y = mean_stat, color = Chemical),
+    size = 2 ) +
+geom_errorbar(
+    data = mean_data %>% filter(Metric == "Cells"),
+    aes(x = Chemical, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
+    width = 0.1) +
+
+  facet_wrap(Treatment ~ .) +
+
+ scale_color_manual(values = custom_colors) +  
+  scale_fill_manual(values = custom_colors) +
+  scale_shape_manual(values = c(Male = 21, Female = 24)) +
+
+  labs(x = "Chemical", y = "# of cells") +
+
+  theme_minimal() +
+  theme(
+    text = element_text(family = "Arial", size = 10),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text.y.right = element_blank(),
+    strip.text.x = element_text(face = "bold"),
+    legend.position = "b",
+    panel.grid.major = element_line(size = 0.5),
+    panel.grid.minor = element_blank()
+  )
+
+plot_Cells
+ggsave(
+  filename = "/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/viability_cells.png",
+  plot = plot_Cells,
+  bg = "white",
+  width = 8,
+  height = 4,
+  dpi = 300
+)
+```
+
+
+

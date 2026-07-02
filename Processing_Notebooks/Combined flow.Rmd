@@ -22,7 +22,7 @@ library(extrafont)
 library(plotrix)
 library(ggplot2)
 library(patchwork)
-
+library(lme4)
 
 output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/Flow cyto (PBMCs)/plots_output/"
 dir.create(output_dir, showWarnings = FALSE)
@@ -313,18 +313,6 @@ cat("\n\n=== ANOVA results for dataset:", dataset_name, "chemical:", chem, "===\
 
 significance_df <- data.frame()
 
-
-for (dataset_name in names(significance_results)) {
-  for (chem in names(significance_results[[dataset_name]])) {
-    significance_labels <- significance_results[[dataset_name]][[chem]]
-    significance_labels$chemical <- chem
-    significance_labels$dataset_name <- dataset_name
-    significance_df <- rbind(significance_df, significance_labels)
-}
-}
-
-significance_df <- data.frame()
-
 for (dataset_name in names(significance_results)) {
   for (chem in names(significance_results[[dataset_name]])) {
        significance_labels <- significance_results[[dataset_name]][[chem]]
@@ -339,7 +327,6 @@ significance_df <- significance_df %>%
   arrange(chemical, dataset_name)
 
 head(significance_df)
-
 combined_data <- data.frame()
 
 for (dataset_name in names(filtered_datasets)) {
@@ -543,18 +530,7 @@ for (dataset_name in names(significance_results)) {
 }
 }
 
-significance_df <- data.frame()
 
-for (dataset_name in names(significance_results)) {
-  for (chem in names(significance_results[[dataset_name]])) {
-       significance_labels <- significance_results[[dataset_name]][[chem]]
-
-    significance_labels$chemical <- chem
-    significance_labels$dataset_name <- dataset_name
-    
-    significance_df <- rbind(significance_df, significance_labels)
-}
-}
 significance_df <- significance_df %>%
   arrange(chemical, dataset_name)
 

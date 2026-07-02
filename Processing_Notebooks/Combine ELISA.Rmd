@@ -21,7 +21,7 @@ output_dir <- "C:/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/EL
 dir.create(output_dir, showWarnings = FALSE)
 custom_colors <- c("#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 chemical_order <- c("PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
-windowsFonts(Arial = windowsFont("Arial"))
+
 ```
 
 #Load data
