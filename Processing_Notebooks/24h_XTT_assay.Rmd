@@ -1,15 +1,21 @@
+#Load data
 ```{r}
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(plotrix)
+library(emmeans)
+library(stringr)
+library(car)
+library(lme4)
+library(lmerTest)
 df <- read.csv("/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/R input.csv")
 
 custom_colors <- c("black", "#330597","#8405a7","#b12a90","#d35171","#f68f44","#fec029")
 chemical_order <- c("DMSO","PFOS", "PFOA", "PFNA", "PFDA", "PFHxS", "GenX")
-
+windowsFonts(Arial = windowsFont("Arial"))
 ```
-
+#Mutate
 ```{r}
 #remove blank rows
 df <- df %>%
@@ -122,9 +128,119 @@ ggsave(
 ```
 
 
-#of cells per well
+#ANOVA and LMM (since data is not normal)
 ```{r}
+unique_treat <- unique(df_human$Treatment)
+significance_results <- list()
+  for (treat in unique_treat) {
+    
+    treat_data <- df_human %>% #HERE 
+      filter(Treatment == treat)
+    
+    if (nrow(treat_data) == 0) next  
+    
+    # Run ANOVA
+    anova_model <- aov(mean ~ Chemical + Error(Human/Chemical), data = treat_data)
+    
+    # Extract p-value for Dose effect
+    anova_summary <- summary(anova_model)
+    
+    # This accesses the Dose p-value inside the Error term
+    p_value <- summary(anova_model)[["Error: Human:Chemical"]][[1]]["Chemical", "Pr(>F)"]
+    
+    # Only run post hoc if ANOVA is significant
+    if (!is.na(p_value) && p_value < 0.05) {
+      
+      tukey_results <- emmeans(anova_model, pairwise ~ Chemical)
+      
+      pairwise_results <- as.data.frame(tukey_results$contrasts) %>%
+        mutate(
+          significance = case_when(
+            p.value < 0.001 ~ "***",
+            p.value < 0.01 ~ "**",
+            p.value < 0.05 ~ "*",
+            p.value >= 0.05 & p.value < 0.099 ~ "."
+          )
+        ) %>%
+        separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+        mutate(
+          group1 = str_replace_all(group1, "[()]", ""),
+          group2 = str_replace_all(group2, "[()]", "")
+        )
+
+     significance_results[[treat]] <-
+      pairwise_results %>%
+      filter(group1 == "DMSO" | group2 == "DMSO")
+
+      significance_results[[paste(treat, sep = "_")]] <- significance_labels  
+    }
+  }
+
+print(significance_results)
+
+unique_treat <- unique(df_human$Treatment)
+
+significance_results <- list()
+
+for (treat in unique_treat) {
+
+  treat_data <- df_human %>%
+    filter(Treatment == treat)
+
+  if (nrow(treat_data) == 0) next
+
+  # Linear mixed model
+  model <- lmer(mean ~ Chemical + (1 | Human), data = treat_data)
+
+  # Overall test for Chemical
+  p_value <- anova(model)["Chemical", "Pr(>F)"]
+  
+if (!is.na(p_value) && p_value < 0.05) {
+
+    tukey_results <- emmeans(model, pairwise ~ Chemical, adjust = "tukey")
+    pairwise_results <- as.data.frame(tukey_results$contrasts) %>%
+      mutate(
+        significance = case_when(
+          p.value < 0.001 ~ "***",
+          p.value < 0.01 ~ "**",
+          p.value < 0.05 ~ "*",
+          p.value < 0.10 ~ ".",
+          TRUE ~ ""
+        )
+      ) %>%
+      separate(contrast, into = c("group1", "group2"), sep = " - ") %>%
+      mutate(
+        group1 = str_replace_all(group1, "[()]", ""),
+        group2 = str_replace_all(group2, "[()]", "")
+      )
+
+    significance_results[[treat]] <-
+      pairwise_results %>%
+      filter(group1 == "DMSO" | group2 == "DMSO")
+      significance_results[[paste(treat, sep = "_")]] <- significance_labels  
+    }
+  }
+print(significance_results)
+
+```
+#Plot # of cells per well
+```{r}
+dmso_stats <- mean_data %>%
+  filter(Chemical == "DMSO", Metric == "Cells")
+
 plot_Cells <- ggplot() +
+    geom_rect(
+    data = dmso_stats,
+    aes(
+      xmin = -Inf,
+      xmax = Inf,
+      ymin = mean_stat - se_stat,
+      ymax = mean_stat + se_stat
+    ),
+    inherit.aes = FALSE,
+    fill = "black",
+    alpha = 0.1
+  ) +
 
   geom_jitter(
     data = df_human %>% filter(Metric == "Cells"),
@@ -169,6 +285,8 @@ geom_errorbar(
     panel.grid.minor = element_blank()
   )
 
+
+
 plot_Cells
 ggsave(
   filename = "/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/viability_cells.png",
@@ -178,6 +296,87 @@ ggsave(
   height = 4,
   dpi = 300
 )
+```
+
+#Extra Statitics
+##Normal and vairance testing
+```{r}
+levene_results <- list()
+shapiro_results <- list()
+
+for (treat in unique(df_human$Treatment)) {
+
+  df_treat <- df_human %>%
+    filter(Treatment == treat)
+
+  cat("\n====================\n")
+  cat("Treatment:", treat, "\n")
+  cat("====================\n")
+
+  # --------------------
+  # Levene's test (variance across Chemical)
+  # --------------------
+  if (length(unique(df_treat$Chemical)) > 1) {
+
+    lev_result <- car::leveneTest(mean ~ Chemical, data = df_treat)
+    lev_p <- lev_result[1, "Pr(>F)"]
+
+    cat("Levene p-value:", lev_p, "\n")
+
+    levene_results[[treat]] <- lev_result
+  }
+
+  # --------------------
+  # Shapiro-Wilk test (normality)
+  # --------------------
+  if (nrow(df_treat) >= 3) {
+
+    shapiro_result <- shapiro.test(df_treat$mean)
+
+    cat("Shapiro p-value:", shapiro_result$p.value, "\n")
+
+    shapiro_results[[treat]] <- shapiro_result
+  }
+}
+
+#fails normality but log
+
+df_human$log_mean <- log10(df_human$mean)
+for (treat in unique(df_human$Treatment)) {
+
+  df_treat <- df_human %>%
+    filter(Treatment == treat)
+
+  cat("\n====================\n")
+  cat("Treatment:", treat, "\n")
+  cat("====================\n")
+
+  # --------------------
+  # Levene's test (variance across Chemical)
+  # --------------------
+  if (length(unique(df_treat$Chemical)) > 1) {
+
+    lev_result <- car::leveneTest(log_mean ~ Chemical, data = df_treat)
+    lev_p <- lev_result[1, "Pr(>F)"]
+
+    cat("Levene p-value:", lev_p, "\n")
+
+    levene_results[[treat]] <- lev_result
+  }
+
+  # --------------------
+  # Shapiro-Wilk test (normality)
+  # --------------------
+  if (nrow(df_treat) >= 3) {
+
+    shapiro_result <- shapiro.test(df_treat$log_mean)
+
+    cat("Shapiro p-value:", shapiro_result$p.value, "\n")
+
+    shapiro_results[[treat]] <- shapiro_result
+  }
+}
+
 ```
 
 
