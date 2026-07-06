@@ -225,77 +225,99 @@ print(significance_results)
 ```
 #Plot # of cells per well
 ```{r}
-dmso_stats <- mean_data %>%
-  filter(Chemical == "DMSO", Metric == "Cells")
 
-plot_Cells <- ggplot() +
+treatments <- unique(mean_data$Treatment)
+
+plots <- list()
+
+for (trt in treatments) {
+
+  dmso_stats <- mean_data %>%
+    filter(Chemical == "DMSO", Metric == "Cells", Treatment == trt)
+
+  p <- ggplot() +
     geom_rect(
-    data = dmso_stats,
-    aes(
-      xmin = -Inf,
-      xmax = Inf,
-      ymin = mean_stat - se_stat,
-      ymax = mean_stat + se_stat
+      data = dmso_stats,
+      aes(
+        xmin = -Inf,
+        xmax = Inf,
+        ymin = mean_stat - se_stat,
+        ymax = mean_stat + se_stat
+      ),
+      inherit.aes = FALSE,
+      fill = "black",
+      alpha = 0.1
+    ) +
+
+    geom_jitter(
+      data = df_human %>% filter(Metric == "Cells", Treatment == trt),
+      aes(
+        x = Chemical,
+        y = mean,
+        color = Chemical,
+        fill = Chemical,
+        shape = Sex
+      ),
+      stroke = 0.8,
+      alpha = 0.3,
+      size = 1.5,
+      width = 0.15
+    ) +
+
+    geom_point(
+      data = mean_data %>% filter(Metric == "Cells", Treatment == trt),
+      aes(x = Chemical, y = mean_stat, color = Chemical),
+      size = 2
+    ) +
+
+    geom_errorbar(
+      data = mean_data %>% filter(Metric == "Cells", Treatment == trt),
+      aes(
+        x = Chemical,
+        ymin = mean_stat - se_stat,
+        ymax = mean_stat + se_stat,
+        color = Chemical
+      ),
+      width = 0.1
+    ) +
+scale_y_continuous(
+  breaks = scales::pretty_breaks(n = 5),
+  labels = scales::label_number()
+)+
+    scale_color_manual(values = custom_colors) +
+    scale_fill_manual(values = custom_colors) +
+    scale_shape_manual(values = c(Male = 21, Female = 24)) +
+
+    labs(
+      title = trt,
+      x = "Chemical",
+      y = "# of cells"
+    ) +
+
+    theme_minimal() +
+    theme(
+      text = element_text(family = "Arial", size = 10),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "B",
+      panel.grid.major = element_line(size = 0.5),
+      panel.grid.minor = element_blank()
+    )
+
+  plots[[trt]] <- p
+
+  ggsave(
+    filename = paste0(
+      "/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/viability_cells_",
+      trt,
+      ".png"
     ),
-    inherit.aes = FALSE,
-    fill = "black",
-    alpha = 0.1
-  ) +
-
-  geom_jitter(
-    data = df_human %>% filter(Metric == "Cells"),
-    aes(
-      x = Chemical,
-      y = mean,
-      color = Chemical,
-      fill = Chemical,
-      shape = Sex
-    ),
-    stroke = 0.8,
-    alpha = 0.3,
-    size = 1.5,
-    width = 0.15
-  ) +
-
-  geom_point(
-    data = mean_data %>% filter(Metric == "Cells"),
-    aes(x = Chemical, y = mean_stat, color = Chemical),
-    size = 2 ) +
-geom_errorbar(
-    data = mean_data %>% filter(Metric == "Cells"),
-    aes(x = Chemical, ymin = mean_stat - se_stat, ymax = mean_stat + se_stat, color = Chemical),
-    width = 0.1) +
-
-  facet_wrap(Treatment ~ .) +
-
- scale_color_manual(values = custom_colors) +  
-  scale_fill_manual(values = custom_colors) +
-  scale_shape_manual(values = c(Male = 21, Female = 24)) +
-
-  labs(x = "Chemical", y = "# of cells") +
-
-  theme_minimal() +
-  theme(
-    text = element_text(family = "Arial", size = 10),
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    strip.text.y.right = element_blank(),
-    strip.text.x = element_text(face = "bold"),
-    legend.position = "b",
-    panel.grid.major = element_line(size = 0.5),
-    panel.grid.minor = element_blank()
+    plot = p,
+    bg = "white",
+    width = 6,
+    height = 3,
+    dpi = 300
   )
-
-
-
-plot_Cells
-ggsave(
-  filename = "/Users/aloan/OneDrive - HC-SC PHAC-ASPC/Desktop/invitro pfas/24 h vaibility experiment/viability_cells.png",
-  plot = plot_Cells,
-  bg = "white",
-  width = 8,
-  height = 4,
-  dpi = 300
-)
+}
 ```
 
 #Extra Statitics
